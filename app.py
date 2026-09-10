@@ -905,21 +905,32 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     if st.button("💾 Guardar Cambios", type="primary"):
         if concepto_in:
             with engine.begin() as conn:
+                # 1. Actualizamos SIEMPRE el movimiento actual de forma explícita
+                conn.execute(
+                    text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t, importe = :imp WHERE id = :id"),
+                    {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "imp": nuevo_importe, "id": mov['id']}
+                )
+                
+                # 2. Si eligió crear regla, aplicamos el patrón al resto de movimientos similares
                 if "REGLA" in ambito:
                     if not patron or len(patron.strip()) < 2:
                         st.error("❌ Escribe una palabra clave válida (mínimo 2 letras).")
                     else:
                         imp_exacto_val = float(nuevo_importe) if "EXACTO" in condicion_regla else 0.0
                         
-                        conn.execute(text("INSERT INTO reglas_categorias (patron, bloque, concepto, importe_exacto) VALUES (:p, :b, :c, :i)"), 
-                                     {"p": patron.strip(), "b": bloque_in, "c": concepto_in.strip(), "i": imp_exacto_val})
+                        # Guardar la regla en la tabla de reglas
+                        conn.execute(
+                            text("INSERT INTO reglas_categorias (patron, bloque, concepto, importe_exacto) VALUES (:p, :b, :c, :i)"), 
+                            {"p": patron.strip(), "b": bloque_in, "c": concepto_in.strip(), "i": imp_exacto_val}
+                        )
                         
+                        # Aplicar la regla a todos los demás registros de la base de datos
                         if imp_exacto_val > 0:
                             conn.execute(text("""
                                 UPDATE movimientos 
-                                SET bloque = :b, concepto = :c, tipo = :t, importe = :imp 
+                                SET bloque = :b, concepto = :c, tipo = :t 
                                 WHERE UPPER(descripcion_original) LIKE :pat AND es_real = 1 AND abs(importe - :imp_ex) < 0.01
-                            """), {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "imp": nuevo_importe, "pat": f"%{patron.strip().upper()}%", "imp_ex": imp_exacto_val})
+                            """), {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "pat": f"%{patron.strip().upper()}%", "imp_ex": imp_exacto_val})
                         else:
                             conn.execute(text("""
                                 UPDATE movimientos 
@@ -927,19 +938,10 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
                                 WHERE UPPER(descripcion_original) LIKE :pat AND es_real = 1
                             """), {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "pat": f"%{patron.strip().upper()}%"})
                             
-                            conn.execute(text("UPDATE movimientos SET importe = :imp WHERE id = :id"), {"imp": nuevo_importe, "id": mov['id']})
-                            
-                        st.success("✅ Regla guardada e importe/categoría actualizados.")
-                        time.sleep(1.2)
-                        st.session_state.vista_nivel = st.session_state.vista_anterior
-                        st.rerun()
-                else:
-                    conn.execute(text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t, importe = :imp WHERE id = :id"), 
-                                 {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "imp": nuevo_importe, "id": mov['id']})
-                    st.success("✅ Movimiento e importe actualizados correctamente.")
-                    time.sleep(1)
-                    st.session_state.vista_nivel = st.session_state.vista_anterior
-                    st.rerun()
+                st.success("✅ Categoría e importe actualizados correctamente.")
+                time.sleep(1)
+                st.session_state.vista_nivel = st.session_state.vista_anterior
+                st.rerun()
         else:
             st.error("Indica un nombre de grupo válido.")
 
