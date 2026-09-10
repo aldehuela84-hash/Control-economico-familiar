@@ -1,13 +1,13 @@
-import sqlite3
-import pandas as pd
+import os
 import time
 import random
 from datetime import datetime
+import pandas as pd
 import streamlit as st
+import sqlalchemy
+from sqlalchemy import create_engine, text
 
-st.set_page_config(page_title="Control Económico Familiar v5.4", page_icon="💰", layout="wide")
-
-DB_FILE = "economia_familiar.db"
+st.set_page_config(page_title="Control Económico Familiar v6.0 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -25,35 +25,39 @@ REGLAS_PREDETERMINADAS = [
 ]
 
 # ==========================================
-# 🧠 MEGA-CEREBRO IA (Heurística Avanzada)
+# 🗄️ CONEXIÓN A BASE DE DATOS (Supabase / SQLite)
 # ==========================================
+def get_db_engine():
+    if "DATABASE_URL" in st.secrets:
+        db_url = st.secrets["DATABASE_URL"]
+    elif "postgres" in st.secrets and "url" in st.secrets["postgres"]:
+        db_url = st.secrets["postgres"]["url"]
+    else:
+        db_url = os.environ.get("DATABASE_URL", "sqlite:///economia_familiar.db")
+    
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+        
+    return create_engine(db_url, pool_pre_ping=True)
+
+engine = get_db_engine()
+is_postgres = "postgresql" in str(engine.url)
+
 def auto_clasificar(desc):
     d = str(desc).upper()
-    
-    # INGRESOS
     if any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "PENSIÓN", "SALARIO"]): return "INGRESOS", "Nómina Jorge"
     if "BIZUM" in d and ("FAVOR" in d or "RECIBIDO" in d): return "INGRESOS", "Ingreso Bizum"
     if "DEVOLUCION" in d or "RETROCESION" in d or "ABONO" in d: return "INGRESOS", "Devoluciones"
-    
-    # VIVIENDA
     if any(x in d for x in ["IBERDROLA", "ENDESA", "NATURGY", "REPSOL LUZ", "CURENERGIA", "ENEL", "AGUAS", "CANAL DE ISABEL", "AQUALIA", "GANA ENERGIA"]): return "VIVIENDA", "Luz gas, agua"
     if any(x in d for x in ["HIPOTECA", "PRESTAMO", "ING DIRECT", "CUOTA PRESTAMO"]): return "VIVIENDA", "Hipoteca chalet"
     if any(x in d for x in ["MOVISTAR", "VODAFONE", "ORANGE", "JAZZTEL", "DIGI", "O2", "LOWI", "SIMYO", "PEPEPHONE", "MASMOVIL"]): return "VIVIENDA", "Telf. Internet."
     if any(x in d for x in ["COMUNIDAD", "FINCAS", "ADMINISTRADOR"]): return "VIVIENDA", "Comunidad"
     if any(x in d for x in ["IBI", "AYUNTAMIENTO", "TRIBUTO", "BASURA"]): return "VIVIENDA", "Impuestos"
-    
-    # COMIDA
     if any(x in d for x in ["MERCADONA", "CARREFOUR", "ALCAMPO", "AHORRAMAS", "LIDL", "ALDI", "DIA", "STELAM MARKET", "EROSKI", "ALIMERKA", "CONSUM", "HIPERCOR", "SUPERCOR"]): return "COMIDA", "Alimentacion"
-    
-    # COCHES
     if any(x in d for x in ["REPSOL", "CEPSA", "PLENOIL", "BALLENOIL", "GALP", "BP", "SHELL", "PETROPRIX", "GREEN GAS", "EASYGAS"]): return "COCHES", "Combustible"
     if any(x in d for x in ["TALLER", "NORAUTO", "MIDAS", "ITV", "RECAMBIOS", "OSCARO", "AUTODOC", "NEUMATICOS"]): return "COCHES", "Mantenimiento"
     if any(x in d for x in ["SEGURO AUTO", "LINEA DIRECTA", "MAPFRE", "MUTUA", "ALLIANZ", "PELAYO", "QUALITAS", "AXA"]) and "VIDA" not in d: return "COCHES", "Seguros"
-    
-    # COMPRAS
     if any(x in d for x in ["AMAZON", "ALIEXPRESS", "SHEIN", "ZARA", "PRIMARK", "DECATHLON", "LEROY", "IKEA", "MR DIY", "WALLAPOP", "VINTED", "EL CORTE INGLES", "MEDIA MARKT", "ZALANDO", "MANGO", "STRADIVARIUS", "PULL", "BERSHKA", "H&M"]): return "COMPRAS", "Amazon/Aliexpres"
-    
-    # GASTOS PERSONALES
     if any(x in d for x in ["FARMACIA", "CLINICA", "DENTAL", "DENTISTA", "OPTICA", "CENTRO EVEL", "HOSPITAL", "FISIOTERAPIA"]): return "GASTOS PERSONALES", "Salud"
     if any(x in d for x in ["PSICOLOGO", "TERAPIA"]): return "GASTOS PERSONALES", "Psicologo"
     if any(x in d for x in ["GIMNASIO", "MCFIT", "BASIC FIT", "ALTAFIT", "FITNESS", "SYNERGY", "CROSSFIT"]): return "GASTOS PERSONALES", "Gimanasio"
@@ -62,88 +66,74 @@ def auto_clasificar(desc):
     if any(x in d for x in ["RENFE", "METRO", "CONSORCIO", "ALSA", "TAXI", "CABIFY", "UBER", "BOLT", "FREE NOW"]): return "GASTOS PERSONALES", "Abono transporte"
     if any(x in d for x in ["KIWOKO", "TIENDANIMAL", "VETERINARIO"]): return "GASTOS PERSONALES", "Mascotas"
     if any(x in d for x in ["PRIMA SEGURO", "SEGURO DE VIDA", "VIDA CAIXA", "SANTALUCIA", "OCASO"]): return "GASTOS PERSONALES", "Seguro Vida"
-    
-    # NIÑOS
     if any(x in d for x in ["COLEGIO", "AMPA", "COMEDOR", "ACADEMIA", "GUARDERIA", "INFANTIL", "JUGUETTOS", "TOYS R US"]): return "NIÑOS", "Extraescolares"
-    
-    # EXTRAS
     if "BIZUM" in d: return "EXTRAS", "Bizum Emitido"
     if any(x in d for x in ["COMISION", "MANTENIMIENTO CUENTA", "LIQUIDACION"]): return "EXTRAS", "Imprevistos"
-    
     return None, None
 
-def get_db_connection():
-    return sqlite3.connect(DB_FILE)
-
 def restaurar_presupuesto_base():
-    conn = get_db_connection()
-    conn.execute("DELETE FROM movimientos WHERE es_real = 0")
-    
-    base_mensual = [
-        ("VIVIENDA", "Hipoteca chalet", 700.0), ("VIVIENDA", "Hipoteca piso", 600.0),
-        ("VIVIENDA", "Luz gas, agua", 180.0), ("VIVIENDA", "Placas solares", 90.0), ("VIVIENDA", "Telf. Internet.", 100.0),
-        ("COMIDA", "Alimentacion", 850.0),
-        ("COCHES", "Cupra", 180.0), ("COCHES", "Combustible", 350.0),
-        ("NIÑOS", "Gastos peques", 100.0), ("NIÑOS", "Comedor", 130.0), ("NIÑOS", "Extraescolares", 110.0),
-        ("COMPRAS", "Amazon/Aliexpres", 120.0),
-        ("GASTOS PERSONALES", "Ocio", 400.0), ("GASTOS PERSONALES", "Psicologo", 120.0),
-        ("GASTOS PERSONALES", "Gimanasio", 50.0), ("GASTOS PERSONALES", "Seguro Vida", 70.0), ("GASTOS PERSONALES", "Abono transporte", 40.0)
-    ]
-    
-    base_especial = [
-        ("VIVIENDA", "Impuestos", 130.0, "Abril"), ("COCHES", "Numeritos", 130.0, "Abril"),
-        ("COCHES", "Mantenimiento", 400.0, "Feb"),
-        ("EXTRAS", "Cumples / Reyes", 240.0, "Ene"), ("EXTRAS", "Cumples / Reyes", 80.0, "Feb"),
-        ("EXTRAS", "Cumples / Reyes", 30.0, "Mar"), ("EXTRAS", "Cumples / Reyes", 80.0, "Abril"),
-        ("EXTRAS", "Cumples / Reyes", 30.0, "Mayo")
-    ]
-    
-    registros = []
-    for anio in range(2026, 2036):
-        for mes in MESES_ORDEN:
-            imp_jorge = 4100.0 if mes == "Ene" else 3020.0
-            registros.append((anio, mes, "INGRESOS", "Nómina Jorge", "INGRESO", imp_jorge, 0, None, "Nómina Jorge"))
-            registros.append((anio, mes, "INGRESOS", "Nómina Grego", "INGRESO", 1500.0, 0, None, "Nómina Grego"))
-            for b, c, imp in base_mensual: registros.append((anio, mes, b, c, "GASTO", imp, 0, None, c))
-        for b, c, imp, mes in base_especial: registros.append((anio, mes, b, c, "GASTO", imp, 0, None, c))
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM movimientos WHERE es_real = 0"))
         
-    conn.cursor().executemany("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", registros)
-    conn.commit(); conn.close()
+        base_mensual = [
+            ("VIVIENDA", "Hipoteca chalet", 700.0), ("VIVIENDA", "Hipoteca piso", 600.0),
+            ("VIVIENDA", "Luz gas, agua", 180.0), ("VIVIENDA", "Placas solares", 90.0), ("VIVIENDA", "Telf. Internet.", 100.0),
+            ("COMIDA", "Alimentacion", 850.0),
+            ("COCHES", "Cupra", 180.0), ("COCHES", "Combustible", 350.0),
+            ("NIÑOS", "Gastos peques", 100.0), ("NIÑOS", "Comedor", 130.0), ("NIÑOS", "Extraescolares", 110.0),
+            ("COMPRAS", "Amazon/Aliexpres", 120.0),
+            ("GASTOS PERSONALES", "Ocio", 400.0), ("GASTOS PERSONALES", "Psicologo", 120.0),
+            ("GASTOS PERSONALES", "Gimanasio", 50.0), ("GASTOS PERSONALES", "Seguro Vida", 70.0), ("GASTOS PERSONALES", "Abono transporte", 40.0)
+        ]
+        
+        base_especial = [
+            ("VIVIENDA", "Impuestos", 130.0, "Abril"), ("COCHES", "Numeritos", 130.0, "Abril"),
+            ("COCHES", "Mantenimiento", 400.0, "Feb"),
+            ("EXTRAS", "Cumples / Reyes", 240.0, "Ene"), ("EXTRAS", "Cumples / Reyes", 80.0, "Feb"),
+            ("EXTRAS", "Cumples / Reyes", 30.0, "Mar"), ("EXTRAS", "Cumples / Reyes", 80.0, "Abril"),
+            ("EXTRAS", "Cumples / Reyes", 30.0, "Mayo")
+        ]
+        
+        registros = []
+        for anio in range(2026, 2036):
+            for mes in MESES_ORDEN:
+                imp_jorge = 4100.0 if mes == "Ene" else 3020.0
+                registros.append({"anio": anio, "mes": mes, "bloque": "INGRESOS", "concepto": "Nómina Jorge", "tipo": "INGRESO", "importe": imp_jorge, "es_real": 0, "fecha_exacta": None, "descripcion_original": "Nómina Jorge"})
+                registros.append({"anio": anio, "mes": mes, "bloque": "INGRESOS", "concepto": "Nómina Grego", "tipo": "INGRESO", "importe": 1500.0, "es_real": 0, "fecha_exacta": None, "descripcion_original": "Nómina Grego"})
+                for b, c, imp in base_mensual:
+                    registros.append({"anio": anio, "mes": mes, "bloque": b, "concepto": c, "tipo": "GASTO", "importe": imp, "es_real": 0, "fecha_exacta": None, "descripcion_original": c})
+            for b, c, imp, mes in base_especial:
+                registros.append({"anio": anio, "mes": mes, "bloque": b, "concepto": c, "tipo": "GASTO", "importe": imp, "es_real": 0, "fecha_exacta": None, "descripcion_original": c})
+            
+        conn.execute(
+            text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:anio, :mes, :bloque, :concepto, :tipo, :importe, :es_real, :fecha_exacta, :descripcion_original)"),
+            registros
+        )
 
 def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, partida_recurrente_id INTEGER, anio INTEGER NOT NULL, mes TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, tipo TEXT NOT NULL, importe REAL NOT NULL, es_real INTEGER DEFAULT 0, fecha_exacta TEXT, descripcion_original TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS meses_cerrados (anio INTEGER NOT NULL, mes TEXT NOT NULL, PRIMARY KEY (anio, mes))''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS desgloses (id INTEGER PRIMARY KEY AUTOINCREMENT, movimiento_id INTEGER NOT NULL, subconcepto TEXT NOT NULL, importe REAL NOT NULL, fecha TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS retiros_ahorro (id INTEGER PRIMARY KEY AUTOINCREMENT, anio INTEGER NOT NULL, mes TEXT NOT NULL, concepto TEXT NOT NULL, importe REAL NOT NULL, fecha TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS reglas_categorias (id INTEGER PRIMARY KEY AUTOINCREMENT, patron TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, importe_exacto REAL DEFAULT 0.0)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor REAL NOT NULL)''')
-    conn.commit()
+    with engine.begin() as conn:
+        if is_postgres:
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, partida_recurrente_id INTEGER, anio INTEGER NOT NULL, mes VARCHAR(10) NOT NULL, bloque VARCHAR(50) NOT NULL, concepto VARCHAR(100) NOT NULL, tipo VARCHAR(20) NOT NULL, importe NUMERIC(10,2) NOT NULL, es_real INTEGER DEFAULT 0, fecha_exacta VARCHAR(20), descripcion_original TEXT)'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS meses_cerrados (anio INTEGER NOT NULL, mes VARCHAR(10) NOT NULL, PRIMARY KEY (anio, mes))'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS desgloses (id SERIAL PRIMARY KEY, movimiento_id INTEGER NOT NULL, subconcepto VARCHAR(100) NOT NULL, importe NUMERIC(10,2) NOT NULL, fecha VARCHAR(20))'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS retiros_ahorro (id SERIAL PRIMARY KEY, anio INTEGER NOT NULL, mes VARCHAR(10) NOT NULL, concepto VARCHAR(100) NOT NULL, importe NUMERIC(10,2) NOT NULL, fecha VARCHAR(20))'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS reglas_categorias (id SERIAL PRIMARY KEY, patron VARCHAR(100) NOT NULL, bloque VARCHAR(50) NOT NULL, concepto VARCHAR(100) NOT NULL, importe_exacto NUMERIC(10,2) DEFAULT 0.0)'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS configuracion (clave VARCHAR(50) PRIMARY KEY, valor NUMERIC(10,2) NOT NULL)'''))
+        else:
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, partida_recurrente_id INTEGER, anio INTEGER NOT NULL, mes TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, tipo TEXT NOT NULL, importe REAL NOT NULL, es_real INTEGER DEFAULT 0, fecha_exacta TEXT, descripcion_original TEXT)'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS meses_cerrados (anio INTEGER NOT NULL, mes TEXT NOT NULL, PRIMARY KEY (anio, mes))'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS desgloses (id INTEGER PRIMARY KEY AUTOINCREMENT, movimiento_id INTEGER NOT NULL, subconcepto TEXT NOT NULL, importe REAL NOT NULL, fecha TEXT)'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS retiros_ahorro (id INTEGER PRIMARY KEY AUTOINCREMENT, anio INTEGER NOT NULL, mes TEXT NOT NULL, concepto TEXT NOT NULL, importe REAL NOT NULL, fecha TEXT)'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS reglas_categorias (id INTEGER PRIMARY KEY AUTOINCREMENT, patron TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, importe_exacto REAL DEFAULT 0.0)'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS configuracion (clave VARCHAR(50) PRIMARY KEY, valor REAL NOT NULL)'''))
 
-    cursor.execute("PRAGMA table_info(retiros_ahorro)")
-    columnas_r = [info[1] for info in cursor.fetchall()]
-    if 'fecha' not in columnas_r:
-        cursor.execute("ALTER TABLE retiros_ahorro ADD COLUMN fecha TEXT")
-        conn.commit()
-
-    cursor.execute("PRAGMA table_info(reglas_categorias)")
-    columnas_reglas = [info[1] for info in cursor.fetchall()]
-    if 'importe_exacto' not in columnas_reglas:
-        cursor.execute("ALTER TABLE reglas_categorias ADD COLUMN importe_exacto REAL DEFAULT 0.0")
-        conn.commit()
-
-    cursor.execute("SELECT valor FROM configuracion WHERE clave = 'saldo_inicial_sep_2026'")
-    if cursor.fetchone() is None:
-        cursor.execute("INSERT INTO configuracion (clave, valor) VALUES ('saldo_inicial_sep_2026', 3500.0)")
-        conn.commit()
-
-    cursor.execute("SELECT COUNT(*) FROM movimientos WHERE es_real = 0")
-    if cursor.fetchone()[0] == 0:
-        conn.close()
-        restaurar_presupuesto_base()
-    else:
-        conn.close()
+        res = conn.execute(text("SELECT valor FROM configuracion WHERE clave = 'saldo_inicial_sep_2026'")).fetchone()
+        if res is None:
+            conn.execute(text("INSERT INTO configuracion (clave, valor) VALUES ('saldo_inicial_sep_2026', 3500.0)"))
+            
+        count = conn.execute(text("SELECT COUNT(*) FROM movimientos WHERE es_real = 0")).fetchone()[0]
+        if count == 0:
+            restaurar_presupuesto_base()
 
 def limpiar_duplicados_df(df_mov):
     if df_mov.empty: return df_mov
@@ -173,10 +163,8 @@ def limpiar_duplicados_df(df_mov):
     return pd.concat(res)
 
 def obtener_metricas_ahorro_completa(anio, saldo_inicial):
-    conn = get_db_connection()
-    df_m = pd.read_sql_query("SELECT anio, mes, bloque, concepto, tipo, importe, es_real FROM movimientos WHERE anio <= ?", conn, params=(anio,))
-    df_r = pd.read_sql_query("SELECT * FROM retiros_ahorro WHERE anio <= ?", conn, params=(anio,))
-    conn.close()
+    df_m = pd.read_sql_query(text("SELECT anio, mes, bloque, concepto, tipo, importe, es_real FROM movimientos WHERE anio <= :anio"), engine, params={"anio": anio})
+    df_r = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio <= :anio"), engine, params={"anio": anio})
     
     df_m_limpio = limpiar_duplicados_df(df_m)
     
@@ -207,7 +195,6 @@ def obtener_metricas_ahorro_completa(anio, saldo_inicial):
     return df_res, saldo_acum
 
 def simular_mes_test(anio, mes):
-    conn = get_db_connection()
     mes_idx = MESES_ORDEN.index(mes) + 1
     
     movimientos_ficticios = [
@@ -245,7 +232,7 @@ def simular_mes_test(anio, mes):
         ("TRANSFERENCIA PISO LUZ", -60.00)
     ]
     
-    reglas_df = pd.read_sql_query("SELECT patron, bloque, concepto, COALESCE(importe_exacto, 0.0) as importe_exacto FROM reglas_categorias", conn)
+    reglas_df = pd.read_sql_query(text("SELECT patron, bloque, concepto, COALESCE(importe_exacto, 0.0) as importe_exacto FROM reglas_categorias"), engine)
     registros = []
     
     for desc, importe in movimientos_ficticios:
@@ -272,13 +259,17 @@ def simular_mes_test(anio, mes):
             if b_ia and c_ia:
                 bloque_val, concepto_limpio = b_ia, c_ia
                 
-        registros.append((anio, mes, bloque_val, concepto_limpio, tipo_val, imp_abs, 1, fecha_exacta, desc))
+        registros.append({"anio": anio, "mes": mes, "bloque": bloque_val, "concepto": concepto_limpio, "tipo": tipo_val, "importe": imp_abs, "es_real": 1, "fecha_exacta": fecha_exacta, "descripcion_original": desc})
         
-    cursor = conn.cursor()
-    cursor.executemany("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", registros)
-    cursor.execute("INSERT OR REPLACE INTO meses_cerrados (anio, mes) VALUES (?, ?)", (anio, mes))
-    conn.commit()
-    conn.close()
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:anio, :mes, :bloque, :concepto, :tipo, :importe, :es_real, :fecha_exacta, :descripcion_original)"),
+            registros
+        )
+        conn.execute(
+            text("INSERT INTO meses_cerrados (anio, mes) VALUES (:anio, :mes) ON CONFLICT (anio, mes) DO NOTHING"),
+            {"anio": anio, "mes": mes}
+        )
 
 init_db()
 
@@ -302,7 +293,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v5.4")
+st.title("💰 Control Económico Familiar v6.0 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -316,10 +307,8 @@ if 'enseñar_id' not in st.session_state: st.session_state.enseñar_id = None
 # ==========================================
 st.sidebar.header("🕹️ Panel de Navegación")
 
-conn = get_db_connection()
-meses_cerrados_df = pd.read_sql_query("SELECT anio, mes FROM meses_cerrados", conn)
-saldo_inicial_db = pd.read_sql_query("SELECT valor FROM configuracion WHERE clave = 'saldo_inicial_sep_2026'", conn).iloc[0]['valor']
-conn.close()
+meses_cerrados_df = pd.read_sql_query(text("SELECT anio, mes FROM meses_cerrados"), engine)
+saldo_inicial_db = pd.read_sql_query(text("SELECT valor FROM configuracion WHERE clave = 'saldo_inicial_sep_2026'"), engine).iloc[0]['valor']
 
 anio_sel = st.sidebar.selectbox("Seleccionar Año:", list(range(2026, 2036)), index=0)
 
@@ -338,27 +327,25 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("🏦 Configuración Ahorro")
 nuevo_saldo_ini = st.sidebar.number_input("Saldo Inicial Ahorro (Ene 2026):", value=float(saldo_inicial_db), step=100.0)
 if nuevo_saldo_ini != saldo_inicial_db:
-    conn = get_db_connection()
-    conn.execute("UPDATE configuracion SET valor = ? WHERE clave = 'saldo_inicial_sep_2026'", (nuevo_saldo_ini,))
-    conn.commit(); conn.close(); st.rerun()
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE configuracion SET valor = :val WHERE clave = 'saldo_inicial_sep_2026'"), {"val": nuevo_saldo_ini})
+    st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🛠️ Zona de Limpieza Total")
 
 if st.sidebar.button("🧹 Borrar Reglas de IA Manuales"):
-    conn = get_db_connection()
-    conn.execute("DELETE FROM reglas_categorias")
-    for pat, blq, cpt, imp in REGLAS_PREDETERMINADAS:
-        conn.execute("INSERT INTO reglas_categorias (patron, bloque, concepto, importe_exacto) VALUES (?, ?, ?, ?)", (pat, blq, cpt, imp))
-    conn.commit(); conn.close()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM reglas_categorias"))
+        for pat, blq, cpt, imp in REGLAS_PREDETERMINADAS:
+            conn.execute(text("INSERT INTO reglas_categorias (patron, bloque, concepto, importe_exacto) VALUES (:pat, :blq, :cpt, :imp)"), {"pat": pat, "blq": blq, "cpt": cpt, "imp": imp})
     st.sidebar.success("Cerebro reseteado.")
     time.sleep(1.5); st.rerun()
 
 if st.sidebar.button("🧨 Borrar SOLO Movimientos de Banco"):
-    conn = get_db_connection()
-    conn.execute("DELETE FROM movimientos WHERE es_real = 1") 
-    conn.execute("DELETE FROM meses_cerrados")
-    conn.commit(); conn.close()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM movimientos WHERE es_real = 1"))
+        conn.execute(text("DELETE FROM meses_cerrados"))
     st.sidebar.success("Banco borrado. Presupuesto intacto.")
     time.sleep(1.5); st.rerun()
     
@@ -383,9 +370,7 @@ if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
     st.subheader(f"🔮 Gestión Visual de Previsiones - Mes de Referencia: {st.session_state.mes_seleccionado} {anio_sel}")
     st.caption("Estructurado por bloques visuales. Haz clic en un concepto para editar su importe o proyectarlo en el tiempo.")
     
-    conn = get_db_connection()
-    df_prev = pd.read_sql_query("SELECT * FROM movimientos WHERE es_real = 0 AND anio = ?", conn, params=(anio_sel,))
-    conn.close()
+    df_prev = pd.read_sql_query(text("SELECT * FROM movimientos WHERE es_real = 0 AND anio = :anio"), engine, params={"anio": anio_sel})
     
     df_prev_ing = df_prev[(df_prev['mes'] == st.session_state.mes_seleccionado) & (df_prev['tipo'] == 'INGRESO')]
     st.markdown('<div class="block-header-ingreso">💵 BLOQUE: INGRESOS (Previsiones)</div>', unsafe_allow_html=True)
@@ -404,22 +389,22 @@ if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
                     del_btn = c_act2.form_submit_button("🗑️ Eliminar Previsión")
                     
                     if sub_btn:
-                        conn = get_db_connection()
-                        if "Solo" in modo_alcance:
-                            conn.execute("UPDATE movimientos SET importe = ? WHERE id = ?", (n_imp, r['id']))
-                        elif "Desde" in modo_alcance:
-                            idx_curr = MESES_ORDEN.index(st.session_state.mes_seleccionado)
-                            meses_futuros = MESES_ORDEN[idx_curr:]
-                            conn.executemany("UPDATE movimientos SET importe = ? WHERE es_real = 0 AND anio = ? AND mes = ? AND concepto = ?", 
-                                             [(n_imp, anio_sel, m, r['concepto']) for m in meses_futuros])
-                        else:
-                            conn.execute("UPDATE movimientos SET importe = ? WHERE es_real = 0 AND anio = ? AND concepto = ?", (n_imp, anio_sel, r['concepto']))
-                        conn.commit(); conn.close(); st.success("¡Previsión actualizada!"); time.sleep(1); st.rerun()
+                        with engine.begin() as conn:
+                            if "Solo" in modo_alcance:
+                                conn.execute(text("UPDATE movimientos SET importe = :imp WHERE id = :id"), {"imp": n_imp, "id": r['id']})
+                            elif "Desde" in modo_alcance:
+                                idx_curr = MESES_ORDEN.index(st.session_state.mes_seleccionado)
+                                meses_futuros = MESES_ORDEN[idx_curr:]
+                                for m in meses_futuros:
+                                    conn.execute(text("UPDATE movimientos SET importe = :imp WHERE es_real = 0 AND anio = :anio AND mes = :mes AND concepto = :cpt"), {"imp": n_imp, "anio": anio_sel, "mes": m, "cpt": r['concepto']})
+                            else:
+                                conn.execute(text("UPDATE movimientos SET importe = :imp WHERE es_real = 0 AND anio = :anio AND concepto = :cpt"), {"imp": n_imp, "anio": anio_sel, "cpt": r['concepto']})
+                        st.success("¡Previsión actualizada!"); time.sleep(1); st.rerun()
                     
                     if del_btn:
-                        conn = get_db_connection()
-                        conn.execute("DELETE FROM movimientos WHERE id = ?", (r['id'],))
-                        conn.commit(); conn.close(); st.success("Previsión eliminada."); time.sleep(1); st.rerun()
+                        with engine.begin() as conn:
+                            conn.execute(text("DELETE FROM movimientos WHERE id = :id"), {"id": r['id']})
+                        st.success("Previsión eliminada."); time.sleep(1); st.rerun()
     else: st.info("No hay previsiones de ingresos para este mes.")
 
     df_prev_gas = df_prev[(df_prev['mes'] == st.session_state.mes_seleccionado) & (df_prev['tipo'] == 'GASTO')]
@@ -441,29 +426,28 @@ if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
                         del_btn = c_act2.form_submit_button("🗑️ Eliminar Previsión")
                         
                         if sub_btn:
-                            conn = get_db_connection()
-                            if "Solo" in modo_alcance:
-                                conn.execute("UPDATE movimientos SET importe = ? WHERE id = ?", (n_imp, r['id']))
-                            elif "Desde" in modo_alcance:
-                                idx_curr = MESES_ORDEN.index(st.session_state.mes_seleccionado)
-                                meses_futuros = MESES_ORDEN[idx_curr:]
-                                conn.executemany("UPDATE movimientos SET importe = ? WHERE es_real = 0 AND anio = ? AND mes = ? AND concepto = ?", 
-                                                 [(n_imp, anio_sel, m, r['concepto']) for m in meses_futuros])
-                            else:
-                                conn.execute("UPDATE movimientos SET importe = ? WHERE es_real = 0 AND anio = ? AND concepto = ?", (n_imp, anio_sel, r['concepto']))
-                            conn.commit(); conn.close(); st.success("¡Previsión actualizada!"); time.sleep(1); st.rerun()
+                            with engine.begin() as conn:
+                                if "Solo" in modo_alcance:
+                                    conn.execute(text("UPDATE movimientos SET importe = :imp WHERE id = :id"), {"imp": n_imp, "id": r['id']})
+                                elif "Desde" in modo_alcance:
+                                    idx_curr = MESES_ORDEN.index(st.session_state.mes_seleccionado)
+                                    meses_futuros = MESES_ORDEN[idx_curr:]
+                                    for m in meses_futuros:
+                                        conn.execute(text("UPDATE movimientos SET importe = :imp WHERE es_real = 0 AND anio = :anio AND mes = :mes AND concepto = :cpt"), {"imp": n_imp, "anio": anio_sel, "mes": m, "cpt": r['concepto']})
+                                else:
+                                    conn.execute(text("UPDATE movimientos SET importe = :imp WHERE es_real = 0 AND anio = :anio AND concepto = :cpt"), {"imp": n_imp, "anio": anio_sel, "cpt": r['concepto']})
+                            st.success("¡Previsión actualizada!"); time.sleep(1); st.rerun()
                         
                         if del_btn:
-                            conn = get_db_connection()
-                            conn.execute("DELETE FROM movimientos WHERE id = ?", (r['id'],))
-                            conn.commit(); conn.close(); st.success("Previsión eliminada."); time.sleep(1); st.rerun()
+                            with engine.begin() as conn:
+                                conn.execute(text("DELETE FROM movimientos WHERE id = :id"), {"id": r['id']})
+                            st.success("Previsión eliminada."); time.sleep(1); st.rerun()
 
 # ==========================================
 # NIVEL 1: VISTA ANUAL
 # ==========================================
 elif st.session_state.vista_nivel == 'ANUAL':
     
-    # 📌 1. NAVEGADOR DE MESES (ARRIBA DEL TODO DEBAJO DEL TÍTULO DE LA APP)
     st.markdown(f"#### 📅 Selección de Mes de Trabajo (Año {anio_sel}):")
     cols_meses = st.columns(12)
     for idx, m in enumerate(MESES_ORDEN):
@@ -481,7 +465,6 @@ elif st.session_state.vista_nivel == 'ANUAL':
     st.caption(f"👉 **Mes activo seleccionado:** `{st.session_state.mes_seleccionado}` (resaltado en Azul Cobalto). Haz clic sobre él para entrar en su desglose.")
     st.markdown("---")
     
-    # 🏦 2. CUENTA BANCARIA DE AHORRO
     df_ahorro_anual, saldo_final_ahorro = obtener_metricas_ahorro_completa(anio_sel, nuevo_saldo_ini)
     
     st.markdown(f'<div class="block-header-ahorro">🏦 CUENTA BANCARIA DE AHORRO – {anio_sel}</div>', unsafe_allow_html=True)
@@ -501,15 +484,12 @@ elif st.session_state.vista_nivel == 'ANUAL':
             
             if st.form_submit_button("💾 Guardar en la Hucha") and c_ahorro_an and i_ahorro_an > 0:
                 imp_final = -i_ahorro_an if "Retiro" in tipo_ahorro_an else i_ahorro_an
-                conn = get_db_connection()
-                conn.execute("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (?, ?, ?, ?, ?)", (anio_sel, m_ret_anual, c_ahorro_an, imp_final, str(f_ahorro_an)))
-                conn.commit(); conn.close()
+                with engine.begin() as conn:
+                    conn.execute(text("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (:a, :m, :c, :i, :f)"), {"a": anio_sel, "m": m_ret_anual, "c": c_ahorro_an, "i": imp_final, "f": str(f_ahorro_an)})
                 st.success(f"Movimiento registrado en la Hucha ({m_ret_anual} {anio_sel})")
                 time.sleep(1); st.rerun()
 
-    conn = get_db_connection()
-    df_retiros_anual = pd.read_sql_query("SELECT * FROM retiros_ahorro WHERE anio = ? ORDER BY id ASC", conn, params=(anio_sel,))
-    conn.close()
+    df_retiros_anual = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio = :anio ORDER BY id ASC"), engine, params={"anio": anio_sel})
     
     if not df_retiros_anual.empty:
         with st.expander("🔍 Ver y Gestionar Movimientos Registrados en la Hucha", expanded=False):
@@ -521,18 +501,15 @@ elif st.session_state.vista_nivel == 'ANUAL':
                 c_r2.write(f"Motivo: **{r_ret['concepto']}**")
                 c_r3.write(f"{signo_str}: **{abs(r_ret['importe']):,.2f} €**")
                 if c_r4.button("❌", key=f"del_ret_anual_{r_ret['id']}"):
-                    conn = get_db_connection()
-                    conn.execute("DELETE FROM retiros_ahorro WHERE id = ?", (r_ret['id'],))
-                    conn.commit(); conn.close(); st.rerun()
+                    with engine.begin() as conn:
+                        conn.execute(text("DELETE FROM retiros_ahorro WHERE id = :id"), {"id": r_ret['id']})
+                    st.rerun()
     
     st.markdown("---")
     
-    # 📊 3. RESUMEN CUENTA OPERATIVA (DEBAJO DE LA CUENTA DE AHORRO)
     st.markdown(f"### 📊 Resumen Cuenta Operativa – {anio_sel}")
     
-    conn = get_db_connection()
-    df_mov = pd.read_sql_query("SELECT * FROM movimientos WHERE anio = ?", conn, params=(anio_sel,))
-    conn.close()
+    df_mov = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :anio"), engine, params={"anio": anio_sel})
     
     df_mov_limpio = limpiar_duplicados_df(df_mov)
     
@@ -605,7 +582,6 @@ elif st.session_state.vista_nivel == 'ANUAL':
 # ==========================================
 elif st.session_state.vista_nivel == 'MENSUAL':
     
-    # 📌 BARRA SUPERIOR DE MESES
     cols_nav = st.columns(12)
     for idx, m_nav in enumerate(MESES_ORDEN):
         is_curr = (m_nav == st.session_state.mes_seleccionado)
@@ -615,10 +591,8 @@ elif st.session_state.vista_nivel == 'MENSUAL':
             st.session_state.mes_seleccionado = m_nav
             st.rerun()
             
-    conn = get_db_connection()
-    es_cerrado = not pd.read_sql_query("SELECT 1 FROM meses_cerrados WHERE anio = ? AND mes = ?", conn, params=(anio_sel, st.session_state.mes_seleccionado)).empty
-    reglas_df = pd.read_sql_query("SELECT patron, bloque, concepto, COALESCE(importe_exacto, 0.0) as importe_exacto FROM reglas_categorias", conn)
-    conn.close()
+    es_cerrado = not pd.read_sql_query(text("SELECT 1 FROM meses_cerrados WHERE anio = :a AND mes = :m"), engine, params={"a": anio_sel, "m": st.session_state.mes_seleccionado}).empty
+    reglas_df = pd.read_sql_query(text("SELECT patron, bloque, concepto, COALESCE(importe_exacto, 0.0) as importe_exacto FROM reglas_categorias"), engine)
     
     tag_estado = '🟢 MES CONSOLIDADO' if es_cerrado else '🟠 PREVISIÓN FUTURA'
     nombre_mes = MESES_NOMBRES.get(st.session_state.mes_seleccionado, st.session_state.mes_seleccionado).upper()
@@ -652,9 +626,7 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                 col_fec = next((c for c in cols_lower if 'fecha' in c or 'f. valor' in c or 'f.valor' in c), None)
 
                 if st.button("🚀 Importar y Conciliar", type="primary") and col_imp and col_desc and col_fec:
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    movs_existentes = pd.read_sql_query("SELECT anio, mes, fecha_exacta, importe, descripcion_original FROM movimientos WHERE es_real = 1", conn)
+                    movs_existentes = pd.read_sql_query(text("SELECT anio, mes, fecha_exacta, importe, descripcion_original FROM movimientos WHERE es_real = 1"), engine)
                     registros = []
                     
                     for _, b_row in df_banco.iterrows():
@@ -716,23 +688,26 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                 if tipo_val == "INGRESO" and not matched and not b_ia:
                                     bloque_val = "INGRESOS"
                                         
-                                registros.append((a_dest, m_dest, bloque_val, concepto_limpio, tipo_val, imp_abs, 1, f_str, desc_orig))
+                                registros.append({"anio": a_dest, "mes": m_dest, "bloque": bloque_val, "concepto": concepto_limpio, "tipo": tipo_val, "importe": imp_abs, "es_real": 1, "fecha_exacta": f_str, "descripcion_original": desc_orig})
                                 
                     if registros:
-                        cursor.executemany("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", registros)
-                        cursor.execute("INSERT OR REPLACE INTO meses_cerrados (anio, mes) VALUES (?, ?)", (anio_sel, st.session_state.mes_seleccionado))
-                        conn.commit()
+                        with engine.begin() as conn:
+                            conn.execute(
+                                text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:anio, :mes, :bloque, :concepto, :tipo, :importe, :es_real, :fecha_exacta, :descripcion_original)"),
+                                registros
+                            )
+                            conn.execute(
+                                text("INSERT INTO meses_cerrados (anio, mes) VALUES (:anio, :mes) ON CONFLICT (anio, mes) DO NOTHING"),
+                                {"anio": anio_sel, "mes": st.session_state.mes_seleccionado}
+                            )
                         st.success(f"¡{len(registros)} registros guardados!")
                     else: st.warning("No se importó nada. Todo estaba duplicado.")
-                    conn.close()
                     time.sleep(2)
                     st.rerun()
             except Exception as e: st.error(str(e))
                 
-    conn = get_db_connection()
-    df_mes = pd.read_sql_query("SELECT * FROM movimientos WHERE anio = ? AND mes = ?", conn, params=(anio_sel, st.session_state.mes_seleccionado))
-    df_retiros_mes = pd.read_sql_query("SELECT * FROM retiros_ahorro WHERE anio = ? AND mes = ?", conn, params=(anio_sel, st.session_state.mes_seleccionado))
-    conn.close()
+    df_mes = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m"), engine, params={"a": anio_sel, "m": st.session_state.mes_seleccionado})
+    df_retiros_mes = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio = :a AND mes = :m"), engine, params={"a": anio_sel, "m": st.session_state.mes_seleccionado})
     
     df_mes_limpio = limpiar_duplicados_df(df_mes)
     
@@ -740,7 +715,6 @@ elif st.session_state.vista_nivel == 'MENSUAL':
     gas_m = df_mes_limpio[df_mes_limpio['tipo'] == 'GASTO']['importe'].sum()
     sobrante_mes = ing_m - gas_m
 
-    # Saldo acumulado real para el mes seleccionado
     df_ahorro_a, _ = obtener_metricas_ahorro_completa(anio_sel, nuevo_saldo_ini)
     saldo_mes_hucha = df_ahorro_a[df_ahorro_a['Mes'] == st.session_state.mes_seleccionado]['Saldo Acumulado Hucha'].values[0]
     
@@ -762,9 +736,9 @@ elif st.session_state.vista_nivel == 'MENSUAL':
             ca2.write(f"Motivo: **{r['concepto']}**")
             ca3.write(f"{signo_str}: **{abs(r['importe']):,.2f} €**")
             if ca4.button("❌", key=f"del_ahorro_{r['id']}"):
-                conn = get_db_connection()
-                conn.execute("DELETE FROM retiros_ahorro WHERE id = ?", (r['id'],))
-                conn.commit(); conn.close(); st.rerun()
+                with engine.begin() as conn:
+                    conn.execute(text("DELETE FROM retiros_ahorro WHERE id = :id"), {"id": r['id']})
+                st.rerun()
                 
     with st.expander("🔻 Registrar un Retiro o Gasto Extraordinario de la Hucha"):
         st.info(f"💡 **Saldo disponible actualmente en la Hucha ({st.session_state.mes_seleccionado} {anio_sel}): {saldo_mes_hucha:,.2f} €**")
@@ -773,9 +747,9 @@ elif st.session_state.vista_nivel == 'MENSUAL':
             i_ahorro = st.number_input("Importe a retirar (€):", min_value=0.0)
             f_ahorro = st.date_input("Fecha del gasto extraordinario:")
             if st.form_submit_button("Guardar Retiro") and c_ahorro and i_ahorro > 0:
-                conn = get_db_connection()
-                conn.execute("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (?, ?, ?, ?, ?)", (anio_sel, st.session_state.mes_seleccionado, c_ahorro, -i_ahorro, str(f_ahorro)))
-                conn.commit(); conn.close(); st.rerun()
+                with engine.begin() as conn:
+                    conn.execute(text("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (:a, :m, :c, :i, :f)"), {"a": anio_sel, "m": st.session_state.mes_seleccionado, "c": c_ahorro, "i": -i_ahorro, "f": str(f_ahorro)})
+                st.rerun()
     st.markdown("---")
     
     df_ing = df_mes[df_mes['tipo'] == 'INGRESO']
@@ -877,8 +851,7 @@ elif st.session_state.vista_nivel == 'MENSUAL':
 elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     st.button("⬅️ Volver Atrás", type="primary", on_click=lambda: st.session_state.update(vista_nivel=st.session_state.vista_anterior))
     
-    conn = get_db_connection()
-    mov = pd.read_sql_query("SELECT * FROM movimientos WHERE id = ?", conn, params=(st.session_state.enseñar_id,)).iloc[0]
+    mov = pd.read_sql_query(text("SELECT * FROM movimientos WHERE id = :id"), engine, params={"id": st.session_state.enseñar_id}).iloc[0]
     
     desc_orig = mov['descripcion_original'] if pd.notna(mov['descripcion_original']) and str(mov['descripcion_original']).lower() != "nan" else mov['concepto']
     st.subheader(f"🧠 Categorizar / Modificar Movimiento: {desc_orig}")
@@ -892,7 +865,7 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     
     bloque_in = st.selectbox("2. Selecciona Bloque:", bloques_disponibles, index=idx_bloque)
     
-    grupos_bd = pd.read_sql_query("SELECT DISTINCT concepto FROM movimientos WHERE bloque = ?", conn, params=(bloque_in,))['concepto'].tolist()
+    grupos_bd = pd.read_sql_query(text("SELECT DISTINCT concepto FROM movimientos WHERE bloque = :b"), engine, params={"b": bloque_in})['concepto'].tolist()
     diccionario_excel = {
         "VIVIENDA": ["Hipoteca chalet", "Hipoteca piso", "Luz gas, agua", "Placas solares", "Telf. Internet.", "Impuestos", "Comunidad"],
         "COMIDA": ["Alimentacion"],
@@ -910,7 +883,6 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     grupo_sel = st.selectbox("3. Selecciona Grupo / Concepto:", ["➕ Crear Nuevo Grupo..."] + grupos_bd, index=idx_grupo)
     concepto_in = st.text_input("Escribe el nombre del grupo:") if grupo_sel == "➕ Crear Nuevo Grupo..." else grupo_sel
     
-    # 💰 NUEVA OPCIÓN: EDITAR EL IMPORTE DIRECTAMENTE DESDE AQUÍ
     nuevo_importe = st.number_input("4. Modificar Importe (€) para este mes (Ej: Paga extra, ajuste):", value=float(mov['importe']), min_value=0.0, step=10.0)
     
     st.markdown("---")
@@ -932,50 +904,42 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     
     if st.button("💾 Guardar Cambios", type="primary"):
         if concepto_in:
-            conn = get_db_connection()
-            c = conn.cursor()
-            try:
+            with engine.begin() as conn:
                 if "REGLA" in ambito:
                     if not patron or len(patron.strip()) < 2:
                         st.error("❌ Escribe una palabra clave válida (mínimo 2 letras).")
                     else:
                         imp_exacto_val = float(nuevo_importe) if "EXACTO" in condicion_regla else 0.0
                         
-                        c.execute("INSERT INTO reglas_categorias (patron, bloque, concepto, importe_exacto) VALUES (?, ?, ?, ?)", 
-                                  (patron.strip(), bloque_in, concepto_in.strip(), imp_exacto_val))
+                        conn.execute(text("INSERT INTO reglas_categorias (patron, bloque, concepto, importe_exacto) VALUES (:p, :b, :c, :i)"), 
+                                     {"p": patron.strip(), "b": bloque_in, "c": concepto_in.strip(), "i": imp_exacto_val})
                         
                         if imp_exacto_val > 0:
-                            c.execute("""
+                            conn.execute(text("""
                                 UPDATE movimientos 
-                                SET bloque=?, concepto=?, tipo=?, importe=? 
-                                WHERE UPPER(descripcion_original) LIKE ? AND es_real=1 AND abs(importe - ?) < 0.01
-                            """, (bloque_in, concepto_in.strip(), tipo_val, nuevo_importe, f"%{patron.strip().upper()}%", imp_exacto_val))
+                                SET bloque = :b, concepto = :c, tipo = :t, importe = :imp 
+                                WHERE UPPER(descripcion_original) LIKE :pat AND es_real = 1 AND abs(importe - :imp_ex) < 0.01
+                            """), {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "imp": nuevo_importe, "pat": f"%{patron.strip().upper()}%", "imp_ex": imp_exacto_val})
                         else:
-                            c.execute("""
+                            conn.execute(text("""
                                 UPDATE movimientos 
-                                SET bloque=?, concepto=?, tipo=? 
-                                WHERE UPPER(descripcion_original) LIKE ? AND es_real=1
-                            """, (bloque_in, concepto_in.strip(), tipo_val, f"%{patron.strip().upper()}%"))
+                                SET bloque = :b, concepto = :c, tipo = :t 
+                                WHERE UPPER(descripcion_original) LIKE :pat AND es_real = 1
+                            """), {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "pat": f"%{patron.strip().upper()}%"})
                             
-                            c.execute("UPDATE movimientos SET importe=? WHERE id=?", (nuevo_importe, mov['id']))
+                            conn.execute(text("UPDATE movimientos SET importe = :imp WHERE id = :id"), {"imp": nuevo_importe, "id": mov['id']})
                             
-                        conn.commit()
                         st.success("✅ Regla guardada e importe/categoría actualizados.")
                         time.sleep(1.2)
                         st.session_state.vista_nivel = st.session_state.vista_anterior
                         st.rerun()
                 else:
-                    c.execute("UPDATE movimientos SET bloque=?, concepto=?, tipo=?, importe=? WHERE id=?", 
-                              (bloque_in, concepto_in.strip(), tipo_val, nuevo_importe, mov['id']))
-                    conn.commit()
+                    conn.execute(text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t, importe = :imp WHERE id = :id"), 
+                                 {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "imp": nuevo_importe, "id": mov['id']})
                     st.success("✅ Movimiento e importe actualizados correctamente.")
                     time.sleep(1)
                     st.session_state.vista_nivel = st.session_state.vista_anterior
                     st.rerun()
-            except Exception as ex:
-                st.error(f"Error al guardar: {str(ex)}")
-            finally:
-                conn.close()
         else:
             st.error("Indica un nombre de grupo válido.")
 
@@ -984,8 +948,8 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
 # ==========================================
 elif st.session_state.vista_nivel == 'DETALLE_AGRUPADO':
     st.button("⬅️ Volver al Mes", type="primary", on_click=lambda: st.session_state.update(vista_nivel='MENSUAL'))
-    conn = get_db_connection()
-    df_movs = pd.read_sql_query("SELECT * FROM movimientos WHERE anio=? AND mes=? AND bloque=? AND concepto=?", conn, params=(anio_sel, st.session_state.mes_seleccionado, st.session_state.detalle_bloque, st.session_state.detalle_concepto))
+    
+    df_movs = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m AND bloque = :b AND concepto = :c"), engine, params={"a": anio_sel, "m": st.session_state.mes_seleccionado, "b": st.session_state.detalle_bloque, "c": st.session_state.detalle_concepto})
     
     has_real = (df_movs['es_real'].astype(int) == 1).any()
     if has_real: df_movs = df_movs[df_movs['es_real'].astype(int) == 1]
@@ -996,8 +960,7 @@ elif st.session_state.vista_nivel == 'DETALLE_AGRUPADO':
         
     mov_ids = tuple(df_movs['id'].tolist())
     if mov_ids:
-        query_t = "SELECT * FROM desgloses WHERE movimiento_id IN " + (str(mov_ids) if len(mov_ids) > 1 else f"({mov_ids[0]})")
-        df_t = pd.read_sql_query(query_t, conn)
+        df_t = pd.read_sql_query(text("SELECT * FROM desgloses WHERE movimiento_id = :mid"), engine, params={"mid": mov_ids[0]})
         
         st.markdown("#### 📝 Añadir Tickets o Sub-Gastos Manuales")
         if not df_t.empty:
@@ -1007,13 +970,15 @@ elif st.session_state.vista_nivel == 'DETALLE_AGRUPADO':
                 c2.write(f"**{r['importe']:,.2f} €**")
                 c3.write(r['fecha'])
                 if c4.button("❌", key=f"del_t_{r['id']}"):
-                    conn.execute("DELETE FROM desgloses WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
+                    with engine.begin() as conn:
+                        conn.execute(text("DELETE FROM desgloses WHERE id = :id"), {"id": r['id']})
+                    st.rerun()
         
         with st.form("f_ticket"):
             s_nom = st.text_input("Detalle Factura / Ticket:")
             s_imp = st.number_input("Importe (€):", min_value=0.0)
             s_fec = st.date_input("Fecha")
             if st.form_submit_button("➕ Añadir Ticket") and s_nom and s_imp > 0:
-                conn.execute("INSERT INTO desgloses (movimiento_id, subconcepto, importe, fecha) VALUES (?,?,?,?)", (mov_ids[0], s_nom, s_imp, str(s_fec)))
-                conn.commit(); st.rerun()
-    conn.close()
+                with engine.begin() as conn:
+                    conn.execute(text("INSERT INTO desgloses (movimiento_id, subconcepto, importe, fecha) VALUES (:mid, :s, :i, :f)"), {"mid": mov_ids[0], "s": s_nom, "i": s_imp, "f": str(s_fec)})
+                st.rerun()
