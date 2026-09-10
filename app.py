@@ -7,7 +7,7 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-st.set_page_config(page_title="Control Económico Familiar v6.1 Cloud", page_icon="💰", layout="wide")
+st.set_page_config(page_title="Control Económico Familiar v6.2 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -293,7 +293,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v6.1 Cloud")
+st.title("💰 Control Económico Familiar v6.2 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -905,13 +905,11 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     if st.button("💾 Guardar Cambios", type="primary"):
         if concepto_in:
             with engine.begin() as conn:
-                # Actualización directa forzosa del registro seleccionado
                 conn.execute(
                     text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t, importe = :imp WHERE id = :id"),
                     {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "imp": nuevo_importe, "id": mov['id']}
                 )
                 
-                # Procesar reglas si se han seleccionado
                 if "REGLA" in ambito and patron and len(patron.strip()) >= 2:
                     imp_exacto_val = float(nuevo_importe) if "EXACTO" in condicion_regla else 0.0
                     conn.execute(
@@ -932,8 +930,7 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
                             WHERE UPPER(descripcion_original) LIKE :pat AND es_real = 1
                         """), {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "pat": f"%{patron.strip().upper()}%"})
             
-            st.success("✅ Cambios aplicados con éxito.")
-            time.sleep(0.5)
+            st.session_state.enseñar_id = None
             st.session_state.vista_nivel = st.session_state.vista_anterior
             st.rerun()
         else:
