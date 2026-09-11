@@ -7,7 +7,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-st.set_page_config(page_title="Control Económico Familiar v6.2 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v6.3
+st.set_page_config(page_title="Control Económico Familiar v6.3 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -293,7 +294,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v6.2 Cloud")
+# 🆕 VERSIÓN ACTUALIZADA A v6.3
+st.title("💰 Control Económico Familiar v6.3 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -890,7 +892,6 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     
     nuevo_importe = st.number_input("4. Modificar Importe (€) para este mes (Ej: Paga extra, ajuste):", value=float(mov['importe']), min_value=0.0, step=10.0)
     
-    # 🆕 PASO 5: Caja de texto añadida para editar la descripción original
     nueva_descripcion = st.text_input("5. 📝 Anotación / Nombre del comercio (Puedes editarlo para poner 'Spotify' u otra aclaración):", value=str(desc_orig))
     
     st.markdown("---")
@@ -909,20 +910,25 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
             f"2) Por Palabra Clave + IMPORTE EXACTO ({nuevo_importe:,.2f} €) - Ideal para transferencias periódicas específicas"
         ])
         patron = st.text_input("Palabra clave a buscar en el extracto del banco:", value=str(desc_orig).split()[0] if desc_orig else "")
+        
+        # 🆕 DETECTOR DE CONFLICTOS EN TIEMPO REAL
+        if patron and len(patron.strip()) >= 2:
+            df_conflicto = pd.read_sql_query(text("SELECT * FROM reglas_categorias WHERE UPPER(patron) = :p"), engine, params={"p": patron.strip().upper()})
+            if not df_conflicto.empty:
+                regla_ant = df_conflicto.iloc[0]
+                if regla_ant['bloque'] != bloque_in or regla_ant['concepto'] != concepto_in:
+                    st.warning(f"⚠️ **¡OJO, CONFLICTO DETECTADO!**\n\nYa tienes una regla para la palabra **'{patron.strip()}'** que está mandando los gastos a **{regla_ant['bloque']} ➔ {regla_ant['concepto']}**.\n\nSi guardas los cambios ahora, actualizarás la regla antigua y a partir de ahora irán a tu nueva selección.")
     
     if st.button("💾 Guardar Cambios", type="primary"):
         if concepto_in:
-            
-            # 🛡️ Conversión estricta a tipos de Python básicos para que Supabase no rechace la orden
             v_id = int(mov['id'])
             v_bloque = str(bloque_in)
             v_concepto = str(concepto_in.strip())
             v_tipo = str(tipo_val)
             v_importe = float(nuevo_importe)
-            v_desc = str(nueva_descripcion.strip()) # 🆕 Guardamos la nueva descripción aquí
+            v_desc = str(nueva_descripcion.strip())
 
             with engine.begin() as conn:
-                # 🆕 Se ha modificado esta consulta SQL para inyectar "descripcion_original = :desc"
                 conn.execute(
                     text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t, importe = :imp, descripcion_original = :desc WHERE id = :id"),
                     {"b": v_bloque, "c": v_concepto, "t": v_tipo, "imp": v_importe, "desc": v_desc, "id": v_id}
@@ -930,10 +936,20 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
                 
                 if "REGLA" in ambito and patron and len(patron.strip()) >= 2:
                     imp_exacto_val = float(nuevo_importe) if "EXACTO" in condicion_regla else 0.0
-                    conn.execute(
-                        text("INSERT INTO reglas_categorias (patron, bloque, concepto, importe_exacto) VALUES (:p, :b, :c, :i)"), 
-                        {"p": str(patron.strip()), "b": v_bloque, "c": v_concepto, "i": imp_exacto_val}
-                    )
+                    
+                    # 🆕 ACTUALIZAR REGLA EN VEZ DE DUPLICAR
+                    df_existe = pd.read_sql_query(text("SELECT id FROM reglas_categorias WHERE UPPER(patron) = :p"), engine, params={"p": patron.strip().upper()})
+                    
+                    if not df_existe.empty:
+                        conn.execute(
+                            text("UPDATE reglas_categorias SET bloque = :b, concepto = :c, importe_exacto = :i WHERE id = :id"), 
+                            {"b": v_bloque, "c": v_concepto, "i": imp_exacto_val, "id": int(df_existe.iloc[0]['id'])}
+                        )
+                    else:
+                        conn.execute(
+                            text("INSERT INTO reglas_categorias (patron, bloque, concepto, importe_exacto) VALUES (:p, :b, :c, :i)"), 
+                            {"p": str(patron.strip()), "b": v_bloque, "c": v_concepto, "i": imp_exacto_val}
+                        )
                     
                     if imp_exacto_val > 0:
                         conn.execute(text("""
@@ -948,7 +964,6 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
                             WHERE UPPER(descripcion_original) LIKE :pat AND es_real = 1
                         """), {"b": v_bloque, "c": v_concepto, "t": v_tipo, "pat": f"%{str(patron.strip()).upper()}%"})
             
-            # Mensaje visual y pausa para que a la nube le de tiempo a digerir la actualización antes de recargar
             st.success("✅ ¡Movimiento categorizado y guardado con éxito!")
             time.sleep(1) 
             
