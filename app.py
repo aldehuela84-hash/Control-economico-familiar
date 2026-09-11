@@ -890,6 +890,9 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     
     nuevo_importe = st.number_input("4. Modificar Importe (€) para este mes (Ej: Paga extra, ajuste):", value=float(mov['importe']), min_value=0.0, step=10.0)
     
+    # 🆕 PASO 5: Caja de texto añadida para editar la descripción original
+    nueva_descripcion = st.text_input("5. 📝 Anotación / Nombre del comercio (Puedes editarlo para poner 'Spotify' u otra aclaración):", value=str(desc_orig))
+    
     st.markdown("---")
     st.markdown("#### ⚙️ Alcance de la Categorización")
     
@@ -916,11 +919,13 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
             v_concepto = str(concepto_in.strip())
             v_tipo = str(tipo_val)
             v_importe = float(nuevo_importe)
+            v_desc = str(nueva_descripcion.strip()) # 🆕 Guardamos la nueva descripción aquí
 
             with engine.begin() as conn:
+                # 🆕 Se ha modificado esta consulta SQL para inyectar "descripcion_original = :desc"
                 conn.execute(
-                    text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t, importe = :imp WHERE id = :id"),
-                    {"b": v_bloque, "c": v_concepto, "t": v_tipo, "imp": v_importe, "id": v_id}
+                    text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t, importe = :imp, descripcion_original = :desc WHERE id = :id"),
+                    {"b": v_bloque, "c": v_concepto, "t": v_tipo, "imp": v_importe, "desc": v_desc, "id": v_id}
                 )
                 
                 if "REGLA" in ambito and patron and len(patron.strip()) >= 2:
