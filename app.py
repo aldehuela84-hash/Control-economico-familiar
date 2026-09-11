@@ -7,8 +7,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v6.3
-st.set_page_config(page_title="Control Económico Familiar v6.3 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v6.4 - Sistema de Traspasos Neutros (COMPLETA)
+st.set_page_config(page_title="Control Económico Familiar v6.4 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -17,7 +17,8 @@ MESES_NOMBRES = {
     "Mayo": "Mayo", "Jun": "Junio", "Jul": "Julio", "Agos": "Agosto",
     "Sep": "Septiembre", "Oct": "Octubre", "Nov": "Noviembre", "Dic": "Diciembre"
 }
-BLOQUES_ORDEN = ["VIVIENDA", "COMIDA", "COCHES", "NIÑOS", "COMPRAS", "GASTOS PERSONALES", "EXTRAS"]
+# 🆕 Añadido bloque TRASPASOS para evitar que sumen o resten
+BLOQUES_ORDEN = ["VIVIENDA", "COMIDA", "COCHES", "NIÑOS", "COMPRAS", "GASTOS PERSONALES", "EXTRAS", "TRASPASOS"]
 
 REGLAS_PREDETERMINADAS = [
     ("MERCADONA", "COMIDA", "Alimentacion", 0.0),
@@ -46,7 +47,8 @@ is_postgres = "postgresql" in str(engine.url)
 
 def auto_clasificar(desc):
     d = str(desc).upper()
-    if any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "PENSIÓN", "SALARIO"]): return "INGRESOS", "Nómina Jorge"
+    if "TRANSFERENCIA" in d and ("JORGE" in d or "BBVA" in d or "ING" in d): return "TRASPASOS", "Movimiento entre cuentas"
+    if any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "PENSIÓN", "SALARIO", "GUARDIA CIVIL", "DIRECCION GENERAL DE LA POLICIA"]): return "INGRESOS", "Nómina Jorge"
     if "BIZUM" in d and ("FAVOR" in d or "RECIBIDO" in d): return "INGRESOS", "Ingreso Bizum"
     if "DEVOLUCION" in d or "RETROCESION" in d or "ABONO" in d: return "INGRESOS", "Devoluciones"
     if any(x in d for x in ["IBERDROLA", "ENDESA", "NATURGY", "REPSOL LUZ", "CURENERGIA", "ENEL", "AGUAS", "CANAL DE ISABEL", "AQUALIA", "GANA ENERGIA"]): return "VIVIENDA", "Luz gas, agua"
@@ -160,6 +162,13 @@ def limpiar_duplicados_df(df_mov):
                     if (df_c['es_real'].astype(int) == 1).any(): res.append(df_c[df_c['es_real'].astype(int) == 1])
                     else: res.append(df_c)
                     
+        # 🆕 Limpiar duplicados de TRASPASOS también
+        df_tras = sub_m[sub_m['tipo'] == 'TRASPASO']
+        for c in df_tras['concepto'].unique():
+            df_c = df_tras[df_tras['concepto'] == c]
+            if (df_c['es_real'].astype(int) == 1).any(): res.append(df_c[df_c['es_real'].astype(int) == 1])
+            else: res.append(df_c)
+                    
     if not res: return df_mov.iloc[0:0]
     return pd.concat(res)
 
@@ -175,6 +184,7 @@ def obtener_metricas_ahorro_completa(anio, saldo_inicial):
     for a in range(2026, anio + 1):
         for m in MESES_ORDEN:
             sub_m = df_m_limpio[(df_m_limpio['anio'] == a) & (df_m_limpio['mes'] == m)]
+            # 🆕 Aquí TRASPASO es ignorado mágicamente, por lo que no infla ingresos ni gastos.
             ing = sub_m[sub_m['tipo'] == 'INGRESO']['importe'].sum()
             gas = sub_m[sub_m['tipo'] == 'GASTO']['importe'].sum()
             
@@ -252,6 +262,7 @@ def simular_mes_test(anio, mes):
             
             if patron_ok and imp_ok:
                 bloque_val, concepto_limpio = r_rule['bloque'], r_rule['concepto']
+                if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
                 matched = True
                 break
                 
@@ -259,6 +270,7 @@ def simular_mes_test(anio, mes):
             b_ia, c_ia = auto_clasificar(desc)
             if b_ia and c_ia:
                 bloque_val, concepto_limpio = b_ia, c_ia
+                if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
                 
         registros.append({"anio": anio, "mes": mes, "bloque": bloque_val, "concepto": concepto_limpio, "tipo": tipo_val, "importe": imp_abs, "es_real": 1, "fecha_exacta": fecha_exacta, "descripcion_original": desc})
         
@@ -280,6 +292,7 @@ st.markdown("""
     .block-header-gasto { background-color: #1E293B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #3B82F6;}
     .block-header-ingreso { background-color: #064E3B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #10B981;}
     .block-header-ahorro { background-color: #4C1D95; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #8B5CF6;}
+    .block-header-traspaso { background-color: #475569; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #94A3B8;}
     .block-header-pendientes { background-color: #991B1B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 25px; margin-bottom: 10px; border-left: 5px solid #F87171;}
     
     button[data-testid="baseButton-primary"], 
@@ -294,8 +307,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 🆕 VERSIÓN ACTUALIZADA A v6.3
-st.title("💰 Control Económico Familiar v6.3 Cloud")
+st.title("💰 Control Económico Familiar v6.4 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -532,7 +544,7 @@ elif st.session_state.vista_nivel == 'ANUAL':
         st.dataframe(pivot_i.style.format("{:,.2f} €"), use_container_width=True)
 
     df_gastos = df_mov_limpio[df_mov_limpio['tipo'] == 'GASTO']
-    for blk in BLOQUES_ORDEN:
+    for blk in [b for b in BLOQUES_ORDEN if b != "TRASPASOS"]:
         df_b = df_gastos[df_gastos['bloque'] == blk]
         if not df_b.empty:
             total_blk_anual = df_b['importe'].sum()
@@ -541,6 +553,16 @@ elif st.session_state.vista_nivel == 'ANUAL':
             pivot_b = pivot_b[[m for m in MESES_ORDEN if m in pivot_b.columns]]
             pivot_b['TOTAL ANUAL'] = pivot_b.sum(axis=1)
             st.dataframe(pivot_b.style.format("{:,.2f} €"), use_container_width=True)
+
+    # 🆕 ZONA PARA MOSTRAR TRASPASOS EN LA VISTA ANUAL
+    df_tras_anual = df_mov_limpio[df_mov_limpio['tipo'] == 'TRASPASO']
+    if not df_tras_anual.empty:
+        total_tras_anual = df_tras_anual['importe'].sum()
+        st.markdown(f'<div class="block-header-traspaso">🔄 TRASPASOS INTERNOS (No suman ni restan del sobrante) | TOTAL MOVILIZADO: {total_tras_anual:,.2f} €</div>', unsafe_allow_html=True)
+        pivot_t = pd.pivot_table(df_tras_anual, values='importe', index='concepto', columns='mes', aggfunc='sum', fill_value=0)
+        pivot_t = pivot_t[[m for m in MESES_ORDEN if m in pivot_t.columns]]
+        pivot_t['TOTAL ANUAL'] = pivot_t.sum(axis=1)
+        st.dataframe(pivot_t.style.format("{:,.2f} €"), use_container_width=True)
 
     st.markdown("---")
     st.markdown("### 🔍 Lupa de Detalles (Descubre qué tickets hay detrás de cada mes)")
@@ -681,6 +703,7 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                     
                                     if patron_ok and imp_ok:
                                         bloque_val, concepto_limpio = r_rule['bloque'], r_rule['concepto']
+                                        if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
                                         matched = True
                                         break
                                 
@@ -688,6 +711,7 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                     b_ia, c_ia = auto_clasificar(desc_orig)
                                     if b_ia and c_ia:
                                         bloque_val, concepto_limpio = b_ia, c_ia
+                                        if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
                                 
                                 if tipo_val == "INGRESO" and not matched and not b_ia:
                                     bloque_val = "INGRESOS"
@@ -782,7 +806,7 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                         st.session_state.vista_nivel = 'ENSENAR_REGLA'
                         st.rerun()
 
-    for blk in BLOQUES_ORDEN:
+    for blk in [b for b in BLOQUES_ORDEN if b != "TRASPASOS"]:
         df_b = df_mes[(df_mes['bloque'] == blk) & (df_mes['tipo'] == 'GASTO')]
         if not df_b.empty:
             total_bloque_mes = df_mes_limpio[(df_mes_limpio['bloque'] == blk) & (df_mes_limpio['tipo'] == 'GASTO')]['importe'].sum()
@@ -837,6 +861,32 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                             st.session_state.vista_nivel = 'DETALLE_AGRUPADO'
                             st.rerun()
 
+    # 🆕 ZONA PARA MOSTRAR TRASPASOS EN EL MES
+    df_tras_mes = df_mes[df_mes['tipo'] == 'TRASPASO']
+    if not df_tras_mes.empty:
+        total_tras_mes = df_mes_limpio[df_mes_limpio['tipo'] == 'TRASPASO']['importe'].sum()
+        st.markdown(f'<div class="block-header-traspaso">🔄 TRASPASOS INTERNOS (No restan ni suman) | TOTAL: {total_tras_mes:,.2f} €</div>', unsafe_allow_html=True)
+        for concepto in df_tras_mes['concepto'].unique():
+            df_c = df_tras_mes[df_tras_mes['concepto'] == concepto]
+            has_real = (df_c['es_real'].astype(int) == 1).any()
+            df_mostrar = df_c[df_c['es_real'].astype(int) == 1] if has_real else df_c
+            total_concepto = df_mostrar['importe'].sum()
+            num_movs = len(df_mostrar)
+            tag = "🟢 REAL" if has_real else "🟠 PREVISIÓN"
+            df_mostrar = df_mostrar.sort_values(by='fecha_exacta', ascending=False)
+            with st.expander(f"{tag} | **{concepto}** | {total_concepto:,.2f} € | *({num_movs} movimientos)*"):
+                for _, row in df_mostrar.iterrows():
+                    f_str = row['fecha_exacta'] if pd.notna(row['fecha_exacta']) else "Sin fecha"
+                    desc = row['descripcion_original'] if pd.notna(row['descripcion_original']) and str(row['descripcion_original']).lower() != "nan" else row['concepto']
+                    
+                    c_fec, c_desc, c_imp, c_act = st.columns([2, 5, 2, 2])
+                    c_fec.write(f"📅 {f_str}"); c_desc.write(f"_{desc}_"); c_imp.write(f"**{row['importe']:,.2f} €**")
+                    if c_act.button("✏️ Cambiar", key=f"edit_mov_{row['id']}"):
+                        st.session_state.enseñar_id = row['id']
+                        st.session_state.vista_anterior = 'MENSUAL'
+                        st.session_state.vista_nivel = 'ENSENAR_REGLA'
+                        st.rerun()
+
     df_pendientes = df_mes[(df_mes['bloque'] == 'PENDIENTE')]
     if not df_pendientes.empty:
         total_pendientes_mes = df_pendientes['importe'].sum()
@@ -859,16 +909,22 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     st.button("⬅️ Volver Atrás", type="primary", on_click=lambda: st.session_state.update(vista_nivel=st.session_state.vista_anterior))
     
     mov = pd.read_sql_query(text("SELECT * FROM movimientos WHERE id = :id"), engine, params={"id": int(st.session_state.enseñar_id)}).iloc[0]
-    
     desc_orig = mov['descripcion_original'] if pd.notna(mov['descripcion_original']) and str(mov['descripcion_original']).lower() != "nan" else mov['concepto']
+    
     st.subheader(f"🧠 Categorizar / Modificar Movimiento: {desc_orig}")
     st.info(f"Importe actual guardado: **{mov['importe']:,.2f} €** | Fecha: {mov['fecha_exacta']} | Mes: **{mov['mes']} {mov['anio']}**")
     
-    tipo_in = st.radio("1. Tipo de movimiento:", ["Dinero que SALE (GASTO)", "Dinero que ENTRA (INGRESO)"], index=0 if mov['tipo']=='GASTO' else 1)
-    tipo_val = "GASTO" if "SALE" in tipo_in else "INGRESO"
+    # 🆕 AÑADIDA LA OPCIÓN DE TRASPASO
+    tipo_in_opts = ["Dinero que SALE (GASTO)", "Dinero que ENTRA (INGRESO)", "🔄 Mover dinero entre mis cuentas (TRASPASO NEUTRO)"]
+    idx_tipo = 0 if mov['tipo']=='GASTO' else (1 if mov['tipo']=='INGRESO' else 2)
+    tipo_in = st.radio("1. Tipo de movimiento:", tipo_in_opts, index=idx_tipo)
+    
+    if "SALE" in tipo_in: tipo_val = "GASTO"
+    elif "ENTRA" in tipo_in: tipo_val = "INGRESO"
+    else: tipo_val = "TRASPASO"
     
     bloques_disponibles = ["INGRESOS"] + BLOQUES_ORDEN
-    idx_bloque = bloques_disponibles.index(mov['bloque']) if mov['bloque'] in bloques_disponibles else (0 if tipo_val == "INGRESO" else 1)
+    idx_bloque = bloques_disponibles.index(mov['bloque']) if mov['bloque'] in bloques_disponibles else (0 if tipo_val == "INGRESO" else (len(bloques_disponibles)-1 if tipo_val == "TRASPASO" else 1))
     
     bloque_in = st.selectbox("2. Selecciona Bloque:", bloques_disponibles, index=idx_bloque)
     
@@ -881,7 +937,8 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
         "COMPRAS": ["Amazon/Aliexpres", "Ropa", "Hogar"],
         "GASTOS PERSONALES": ["Ocio", "Psicologo", "Gimanasio", "Seguro Vida", "Abono transporte", "Salud", "Mascotas"],
         "EXTRAS": ["Cumples / Reyes", "Imprevistos", "Bizum Emitido"],
-        "INGRESOS": ["Nómina Jorge", "Nómina Grego", "Transferencia", "Devolución", "Ingreso Bizum"]
+        "INGRESOS": ["Nómina Jorge", "Nómina Grego", "Transferencia", "Devolución", "Ingreso Bizum"],
+        "TRASPASOS": ["Traspaso entre cuentas"] # 🆕 Añadido
     }
     for concepto_base in diccionario_excel.get(bloque_in, []):
         if concepto_base not in grupos_bd: grupos_bd.append(concepto_base)
@@ -890,97 +947,70 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     grupo_sel = st.selectbox("3. Selecciona Grupo / Concepto:", ["➕ Crear Nuevo Grupo..."] + grupos_bd, index=idx_grupo)
     concepto_in = st.text_input("Escribe el nombre del grupo:") if grupo_sel == "➕ Crear Nuevo Grupo..." else grupo_sel
     
-    nuevo_importe = st.number_input("4. Modificar Importe (€) para este mes (Ej: Paga extra, ajuste):", value=float(mov['importe']), min_value=0.0, step=10.0)
-    
-    nueva_descripcion = st.text_input("5. 📝 Anotación / Nombre del comercio (Puedes editarlo para poner 'Spotify' u otra aclaración):", value=str(desc_orig))
+    nuevo_importe = st.number_input("4. Modificar Importe (€):", value=float(mov['importe']), min_value=0.0, step=10.0)
+    nueva_descripcion = st.text_input("5. 📝 Anotación / Nombre del comercio:", value=str(desc_orig))
     
     st.markdown("---")
     st.markdown("#### ⚙️ Alcance de la Categorización")
     
-    ambito = st.radio("¿Cómo quieres aplicar este cambio?", [
-        "A) SOLO ESTE MOVIMIENTO (Modifica únicamente este registro exacto - Ideal para pagas extras)",
-        "B) CREAR REGLA PARA EL FUTURO (Categorizará también comercios o transferencias similares)"
-    ])
+    ambito = st.radio("¿Cómo quieres aplicar este cambio?", ["A) SOLO ESTE MOVIMIENTO", "B) CREAR REGLA PARA EL FUTURO"])
     
-    condicion_regla = "SOLO_TEXTO"
-    patron = ""
+    condicion_regla, patron = "SOLO_TEXTO", ""
     if "REGLA" in ambito:
         condicion_regla = st.radio("¿Cómo debe detectar la regla los siguientes movimientos?", [
-            "1) Solo por Palabra Clave (Ej: MERCADONA, IBERDROLA - Para cualquier importe)",
-            f"2) Por Palabra Clave + IMPORTE EXACTO ({nuevo_importe:,.2f} €) - Ideal para transferencias periódicas específicas"
+            "1) Solo por Palabra Clave (Ej: MERCADONA)",
+            f"2) Por Palabra Clave + IMPORTE EXACTO ({nuevo_importe:,.2f} €)"
         ])
         patron = st.text_input("Palabra clave a buscar en el extracto del banco:", value=str(desc_orig).split()[0] if desc_orig else "")
         
-        # 🆕 DETECTOR DE CONFLICTOS EN TIEMPO REAL
         if patron and len(patron.strip()) >= 2:
             df_conflicto = pd.read_sql_query(text("SELECT * FROM reglas_categorias WHERE UPPER(patron) = :p"), engine, params={"p": patron.strip().upper()})
             if not df_conflicto.empty:
                 regla_ant = df_conflicto.iloc[0]
                 if regla_ant['bloque'] != bloque_in or regla_ant['concepto'] != concepto_in:
-                    st.warning(f"⚠️ **¡OJO, CONFLICTO DETECTADO!**\n\nYa tienes una regla para la palabra **'{patron.strip()}'** que está mandando los gastos a **{regla_ant['bloque']} ➔ {regla_ant['concepto']}**.\n\nSi guardas los cambios ahora, actualizarás la regla antigua y a partir de ahora irán a tu nueva selección.")
+                    st.warning(f"⚠️ **¡OJO, CONFLICTO DETECTADO!**\n\nYa tienes una regla para la palabra **'{patron.strip()}'** hacia **{regla_ant['bloque']} ➔ {regla_ant['concepto']}**.\nSi guardas, la sobrescribirás.")
     
     if st.button("💾 Guardar Cambios", type="primary"):
         if concepto_in:
             v_id = int(mov['id'])
-            v_bloque = str(bloque_in)
-            v_concepto = str(concepto_in.strip())
-            v_tipo = str(tipo_val)
-            v_importe = float(nuevo_importe)
-            v_desc = str(nueva_descripcion.strip())
-
             with engine.begin() as conn:
                 conn.execute(
                     text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t, importe = :imp, descripcion_original = :desc WHERE id = :id"),
-                    {"b": v_bloque, "c": v_concepto, "t": v_tipo, "imp": v_importe, "desc": v_desc, "id": v_id}
+                    {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "imp": float(nuevo_importe), "desc": nueva_descripcion.strip(), "id": v_id}
                 )
                 
                 if "REGLA" in ambito and patron and len(patron.strip()) >= 2:
                     imp_exacto_val = float(nuevo_importe) if "EXACTO" in condicion_regla else 0.0
-                    
-                    # 🆕 ACTUALIZAR REGLA EN VEZ DE DUPLICAR
                     df_existe = pd.read_sql_query(text("SELECT id FROM reglas_categorias WHERE UPPER(patron) = :p"), engine, params={"p": patron.strip().upper()})
                     
                     if not df_existe.empty:
                         conn.execute(
                             text("UPDATE reglas_categorias SET bloque = :b, concepto = :c, importe_exacto = :i WHERE id = :id"), 
-                            {"b": v_bloque, "c": v_concepto, "i": imp_exacto_val, "id": int(df_existe.iloc[0]['id'])}
+                            {"b": bloque_in, "c": concepto_in.strip(), "i": imp_exacto_val, "id": int(df_existe.iloc[0]['id'])}
                         )
                     else:
                         conn.execute(
                             text("INSERT INTO reglas_categorias (patron, bloque, concepto, importe_exacto) VALUES (:p, :b, :c, :i)"), 
-                            {"p": str(patron.strip()), "b": v_bloque, "c": v_concepto, "i": imp_exacto_val}
+                            {"p": str(patron.strip()), "b": bloque_in, "c": concepto_in.strip(), "i": imp_exacto_val}
                         )
                     
                     if imp_exacto_val > 0:
-                        conn.execute(text("""
-                            UPDATE movimientos 
-                            SET bloque = :b, concepto = :c, tipo = :t 
-                            WHERE UPPER(descripcion_original) LIKE :pat AND es_real = 1 AND abs(importe - :imp_ex) < 0.01
-                        """), {"b": v_bloque, "c": v_concepto, "t": v_tipo, "pat": f"%{str(patron.strip()).upper()}%", "imp_ex": imp_exacto_val})
+                        conn.execute(text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t WHERE UPPER(descripcion_original) LIKE :pat AND es_real = 1 AND abs(importe - :imp_ex) < 0.01"), {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "pat": f"%{str(patron.strip()).upper()}%", "imp_ex": imp_exacto_val})
                     else:
-                        conn.execute(text("""
-                            UPDATE movimientos 
-                            SET bloque = :b, concepto = :c, tipo = :t 
-                            WHERE UPPER(descripcion_original) LIKE :pat AND es_real = 1
-                        """), {"b": v_bloque, "c": v_concepto, "t": v_tipo, "pat": f"%{str(patron.strip()).upper()}%"})
+                        conn.execute(text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t WHERE UPPER(descripcion_original) LIKE :pat AND es_real = 1"), {"b": bloque_in, "c": concepto_in.strip(), "t": tipo_val, "pat": f"%{str(patron.strip()).upper()}%"})
             
             st.success("✅ ¡Movimiento categorizado y guardado con éxito!")
             time.sleep(1) 
-            
             st.session_state.enseñar_id = None
             st.session_state.vista_nivel = st.session_state.vista_anterior
             st.rerun()
         else:
             st.error("Indica un nombre de grupo válido.")
 
-# ==========================================
-# NIVEL 3: DETALLE AGRUPADO Y TICKETS
-# ==========================================
 elif st.session_state.vista_nivel == 'DETALLE_AGRUPADO':
     st.button("⬅️ Volver al Mes", type="primary", on_click=lambda: st.session_state.update(vista_nivel='MENSUAL'))
     
     df_movs = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m AND bloque = :b AND concepto = :c"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "b": str(st.session_state.detalle_bloque), "c": str(st.session_state.detalle_concepto)})
-    
     has_real = (df_movs['es_real'].astype(int) == 1).any()
     if has_real: df_movs = df_movs[df_movs['es_real'].astype(int) == 1]
     
@@ -991,14 +1021,11 @@ elif st.session_state.vista_nivel == 'DETALLE_AGRUPADO':
     mov_ids = tuple(df_movs['id'].tolist())
     if mov_ids:
         df_t = pd.read_sql_query(text("SELECT * FROM desgloses WHERE movimiento_id = :mid"), engine, params={"mid": int(mov_ids[0])})
-        
         st.markdown("#### 📝 Añadir Tickets o Sub-Gastos Manuales")
         if not df_t.empty:
             for _, r in df_t.iterrows():
                 c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
-                c1.write(f"🏷️ {r['subconcepto']}")
-                c2.write(f"**{r['importe']:,.2f} €**")
-                c3.write(r['fecha'])
+                c1.write(f"🏷️ {r['subconcepto']}"); c2.write(f"**{r['importe']:,.2f} €**"); c3.write(r['fecha'])
                 if c4.button("❌", key=f"del_t_{r['id']}"):
                     with engine.begin() as conn:
                         conn.execute(text("DELETE FROM desgloses WHERE id = :id"), {"id": int(r['id'])})
