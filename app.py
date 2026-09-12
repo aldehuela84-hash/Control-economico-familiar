@@ -7,8 +7,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v6.4 - Sistema de Traspasos Neutros (COMPLETA)
-st.set_page_config(page_title="Control Económico Familiar v6.4 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v6.5 - Ingresos Automáticos desde Ahorro (COMPLETA)
+st.set_page_config(page_title="Control Económico Familiar v6.5 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -17,7 +17,6 @@ MESES_NOMBRES = {
     "Mayo": "Mayo", "Jun": "Junio", "Jul": "Julio", "Agos": "Agosto",
     "Sep": "Septiembre", "Oct": "Octubre", "Nov": "Noviembre", "Dic": "Diciembre"
 }
-# 🆕 Añadido bloque TRASPASOS para evitar que sumen o resten
 BLOQUES_ORDEN = ["VIVIENDA", "COMIDA", "COCHES", "NIÑOS", "COMPRAS", "GASTOS PERSONALES", "EXTRAS", "TRASPASOS"]
 
 REGLAS_PREDETERMINADAS = [
@@ -162,7 +161,6 @@ def limpiar_duplicados_df(df_mov):
                     if (df_c['es_real'].astype(int) == 1).any(): res.append(df_c[df_c['es_real'].astype(int) == 1])
                     else: res.append(df_c)
                     
-        # 🆕 Limpiar duplicados de TRASPASOS también
         df_tras = sub_m[sub_m['tipo'] == 'TRASPASO']
         for c in df_tras['concepto'].unique():
             df_c = df_tras[df_tras['concepto'] == c]
@@ -184,7 +182,6 @@ def obtener_metricas_ahorro_completa(anio, saldo_inicial):
     for a in range(2026, anio + 1):
         for m in MESES_ORDEN:
             sub_m = df_m_limpio[(df_m_limpio['anio'] == a) & (df_m_limpio['mes'] == m)]
-            # 🆕 Aquí TRASPASO es ignorado mágicamente, por lo que no infla ingresos ni gastos.
             ing = sub_m[sub_m['tipo'] == 'INGRESO']['importe'].sum()
             gas = sub_m[sub_m['tipo'] == 'GASTO']['importe'].sum()
             
@@ -307,7 +304,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v6.4 Cloud")
+st.title("💰 Control Económico Familiar v6.5 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -499,9 +496,18 @@ elif st.session_state.vista_nivel == 'ANUAL':
             if st.form_submit_button("💾 Guardar en la Hucha") and c_ahorro_an and i_ahorro_an > 0:
                 imp_final = -float(i_ahorro_an) if "Retiro" in tipo_ahorro_an else float(i_ahorro_an)
                 with engine.begin() as conn:
+                    # Guardamos el movimiento en la hucha
                     conn.execute(text("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (:a, :m, :c, :i, :f)"), {"a": int(anio_sel), "m": str(m_ret_anual), "c": str(c_ahorro_an), "i": imp_final, "f": str(f_ahorro_an)})
-                st.success(f"Movimiento registrado en la Hucha ({m_ret_anual} {anio_sel})")
-                time.sleep(1); st.rerun()
+                    
+                    # 🆕 v6.5: Generar el ingreso de manera automática en la cuenta del día a día si sacamos dinero de la hucha
+                    if imp_final < 0:
+                        conn.execute(
+                            text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:a, :m, :b, :c, :t, :i, :er, :f, :d)"),
+                            {"a": int(anio_sel), "m": str(m_ret_anual), "b": "INGRESOS", "c": "Traspaso desde Ahorro", "t": "INGRESO", "i": abs(imp_final), "er": 1, "f": str(f_ahorro_an), "d": f"Traspaso automático ({c_ahorro_an})"}
+                        )
+                        
+                st.success(f"Movimiento registrado en la Hucha ({m_ret_anual} {anio_sel}) e ingreso generado con éxito.")
+                time.sleep(1.5); st.rerun()
 
     df_retiros_anual = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio = :anio ORDER BY id ASC"), engine, params={"anio": anio_sel})
     
@@ -776,7 +782,14 @@ elif st.session_state.vista_nivel == 'MENSUAL':
             f_ahorro = st.date_input("Fecha del gasto extraordinario:")
             if st.form_submit_button("Guardar Retiro") and c_ahorro and i_ahorro > 0:
                 with engine.begin() as conn:
+                    # Guardamos el retiro en la tabla de ahorros (en negativo)
                     conn.execute(text("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (:a, :m, :c, :i, :f)"), {"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "c": str(c_ahorro), "i": -float(i_ahorro), "f": str(f_ahorro)})
+                    
+                    # 🆕 v6.5: Generamos un ingreso en cuenta equivalente de manera automática
+                    conn.execute(
+                        text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:a, :m, :b, :c, :t, :i, :er, :f, :d)"),
+                        {"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "b": "INGRESOS", "c": "Traspaso desde Ahorro", "t": "INGRESO", "i": float(i_ahorro), "er": 1, "f": str(f_ahorro), "d": f"Traspaso automático ({c_ahorro})"}
+                    )
                 st.rerun()
     st.markdown("---")
     
@@ -937,8 +950,8 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
         "COMPRAS": ["Amazon/Aliexpres", "Ropa", "Hogar"],
         "GASTOS PERSONALES": ["Ocio", "Psicologo", "Gimanasio", "Seguro Vida", "Abono transporte", "Salud", "Mascotas"],
         "EXTRAS": ["Cumples / Reyes", "Imprevistos", "Bizum Emitido"],
-        "INGRESOS": ["Nómina Jorge", "Nómina Grego", "Transferencia", "Devolución", "Ingreso Bizum"],
-        "TRASPASOS": ["Traspaso entre cuentas"] # 🆕 Añadido
+        "INGRESOS": ["Nómina Jorge", "Nómina Grego", "Transferencia", "Devolución", "Ingreso Bizum", "Traspaso desde Ahorro"],
+        "TRASPASOS": ["Traspaso entre cuentas"]
     }
     for concepto_base in diccionario_excel.get(bloque_in, []):
         if concepto_base not in grupos_bd: grupos_bd.append(concepto_base)
