@@ -7,8 +7,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v6.6 - Categorización Masiva (Modo Viajes)
-st.set_page_config(page_title="Control Económico Familiar v6.6 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v6.7 - Interruptor Ciclo de Nómina / Calendario
+st.set_page_config(page_title="Control Económico Familiar v6.7 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -25,7 +25,6 @@ REGLAS_PREDETERMINADAS = [
     ("REPSOL", "COCHES", "Combustible", 0.0)
 ]
 
-# 🆕 Diccionario Maestro Global para evitar repetir código
 DICCIONARIO_EXCEL = {
     "VIVIENDA": ["Hipoteca chalet", "Hipoteca piso", "Luz gas, agua", "Placas solares", "Telf. Internet.", "Impuestos", "Comunidad"],
     "COMIDA": ["Alimentacion"],
@@ -39,7 +38,7 @@ DICCIONARIO_EXCEL = {
 }
 
 # ==========================================
-# 🗄️ CONEXIÓN A BASE DE DATOS (Supabase / SQLite)
+# 🗄️ CONEXIÓN A BASE DE DATOS
 # ==========================================
 def get_db_engine():
     if "DATABASE_URL" in st.secrets:
@@ -87,7 +86,6 @@ def auto_clasificar(desc):
     return None, None
 
 def obtener_conceptos_bloque(bloque_nombre):
-    # Función útil para alimentar los desplegables de Categorización
     grupos_bd = pd.read_sql_query(text("SELECT DISTINCT concepto FROM movimientos WHERE bloque = :b"), engine, params={"b": bloque_nombre})['concepto'].tolist()
     for c in DICCIONARIO_EXCEL.get(bloque_nombre, []):
         if c not in grupos_bd:
@@ -259,7 +257,6 @@ def simular_mes_test(anio, mes):
         ("COMEDOR ESCOLAR", -130.00),
         ("TRANSFERENCIA A ALBA", -150.00),
         ("TRANSFERENCIA PISO LUZ", -60.00),
-        # Simulamos un mini viaje sin categorizar
         ("REST EL CASTILLO SANTILLANA", -9.50),
         ("VIA SANTANDER ES", -7.80),
         ("PARQUE NATURALEZA CABARCENO", -110.00)
@@ -330,7 +327,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v6.6 Cloud")
+st.title("💰 Control Económico Familiar v6.7 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -379,11 +376,12 @@ if st.sidebar.button("🧹 Borrar Reglas de IA Manuales"):
     st.sidebar.success("Cerebro reseteado.")
     time.sleep(1.5); st.rerun()
 
+# ESTE ES EL BOTÓN QUE USARÁS PARA LIMPIAR SIN PERDER REGLAS
 if st.sidebar.button("🧨 Borrar SOLO Movimientos de Banco"):
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM movimientos WHERE es_real = 1"))
         conn.execute(text("DELETE FROM meses_cerrados"))
-    st.sidebar.success("Banco borrado. Presupuesto intacto.")
+    st.sidebar.success("Banco borrado. Presupuesto intacto. Reglas guardadas.")
     time.sleep(1.5); st.rerun()
     
 if st.sidebar.button("🔁 Restaurar Presupuesto Base"):
@@ -405,7 +403,6 @@ if st.sidebar.button("🔴 Ejecutar Test Automático (Simular Mes)", type="prima
 if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
     st.button("⬅️ Volver", type="primary", on_click=lambda: st.session_state.update(vista_nivel=st.session_state.vista_anterior))
     st.subheader(f"🔮 Gestión Visual de Previsiones - Mes de Referencia: {st.session_state.mes_seleccionado} {anio_sel}")
-    st.caption("Estructurado por bloques visuales. Haz clic en un concepto para editar su importe o proyectarlo en el tiempo.")
     
     df_prev = pd.read_sql_query(text("SELECT * FROM movimientos WHERE es_real = 0 AND anio = :anio"), engine, params={"anio": anio_sel})
     
@@ -416,11 +413,7 @@ if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
             with st.expander(f"🟢 **{r['concepto']}** | Importe actual en {st.session_state.mes_seleccionado}: **{r['importe']:,.2f} €**"):
                 with st.form(f"form_edit_prev_{r['id']}"):
                     n_imp = st.number_input("Nuevo importe previsto (€):", value=float(r['importe']), step=10.0)
-                    modo_alcance = st.radio("¿A qué meses aplicar este cambio?", [
-                        "A) Solo a este mes",
-                        "B) Desde este mes en adelante (Hasta Dic)",
-                        "C) A todos los 12 meses del año"
-                    ])
+                    modo_alcance = st.radio("¿A qué meses aplicar este cambio?", ["A) Solo a este mes", "B) Desde este mes en adelante (Hasta Dic)", "C) A todos los 12 meses del año"])
                     c_act1, c_act2 = st.columns([3, 1])
                     sub_btn = c_act1.form_submit_button("💾 Guardar Cambios")
                     del_btn = c_act2.form_submit_button("🗑️ Eliminar Previsión")
@@ -437,7 +430,6 @@ if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
                             else:
                                 conn.execute(text("UPDATE movimientos SET importe = :imp WHERE es_real = 0 AND anio = :anio AND concepto = :cpt"), {"imp": float(n_imp), "anio": int(anio_sel), "cpt": str(r['concepto'])})
                         st.success("¡Previsión actualizada!"); time.sleep(1); st.rerun()
-                    
                     if del_btn:
                         with engine.begin() as conn:
                             conn.execute(text("DELETE FROM movimientos WHERE id = :id"), {"id": int(r['id'])})
@@ -453,11 +445,7 @@ if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
                 with st.expander(f"🟠 **{r['concepto']}** | Importe actual en {st.session_state.mes_seleccionado}: **{r['importe']:,.2f} €**"):
                     with st.form(f"form_edit_prev_{r['id']}"):
                         n_imp = st.number_input("Nuevo importe previsto (€):", value=float(r['importe']), step=10.0)
-                        modo_alcance = st.radio("¿A qué meses aplicar este cambio?", [
-                            "A) Solo a este mes",
-                            "B) Desde este mes en adelante (Hasta Dic)",
-                            "C) A todos los 12 meses del año"
-                        ], key=f"rad_{r['id']}")
+                        modo_alcance = st.radio("¿A qué meses aplicar este cambio?", ["A) Solo a este mes", "B) Desde este mes en adelante (Hasta Dic)", "C) A todos los 12 meses del año"], key=f"rad_{r['id']}")
                         c_act1, c_act2 = st.columns([3, 1])
                         sub_btn = c_act1.form_submit_button("💾 Guardar Cambios")
                         del_btn = c_act2.form_submit_button("🗑️ Eliminar Previsión")
@@ -474,7 +462,6 @@ if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
                                 else:
                                     conn.execute(text("UPDATE movimientos SET importe = :imp WHERE es_real = 0 AND anio = :anio AND concepto = :cpt"), {"imp": float(n_imp), "anio": int(anio_sel), "cpt": str(r['concepto'])})
                             st.success("¡Previsión actualizada!"); time.sleep(1); st.rerun()
-                        
                         if del_btn:
                             with engine.begin() as conn:
                                 conn.execute(text("DELETE FROM movimientos WHERE id = :id"), {"id": int(r['id'])})
@@ -499,7 +486,6 @@ elif st.session_state.vista_nivel == 'ANUAL':
             st.session_state.vista_nivel = 'MENSUAL'
             st.rerun()
 
-    st.caption(f"👉 **Mes activo seleccionado:** `{st.session_state.mes_seleccionado}` (resaltado en Azul Cobalto). Haz clic sobre él para entrar en su desglose.")
     st.markdown("---")
     
     df_ahorro_anual, saldo_final_ahorro = obtener_metricas_ahorro_completa(anio_sel, nuevo_saldo_ini)
@@ -585,39 +571,17 @@ elif st.session_state.vista_nivel == 'ANUAL':
     df_tras_anual = df_mov_limpio[df_mov_limpio['tipo'] == 'TRASPASO']
     if not df_tras_anual.empty:
         total_tras_anual = df_tras_anual['importe'].sum()
-        st.markdown(f'<div class="block-header-traspaso">🔄 TRASPASOS INTERNOS (No suman ni restan del sobrante) | TOTAL MOVILIZADO: {total_tras_anual:,.2f} €</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="block-header-traspaso">🔄 TRASPASOS INTERNOS | TOTAL: {total_tras_anual:,.2f} €</div>', unsafe_allow_html=True)
         pivot_t = pd.pivot_table(df_tras_anual, values='importe', index='concepto', columns='mes', aggfunc='sum', fill_value=0)
         pivot_t = pivot_t[[m for m in MESES_ORDEN if m in pivot_t.columns]]
         pivot_t['TOTAL ANUAL'] = pivot_t.sum(axis=1)
         st.dataframe(pivot_t.style.format("{:,.2f} €"), use_container_width=True)
 
     st.markdown("---")
-    st.markdown("### 🔍 Lupa de Detalles (Descubre qué tickets hay detrás de cada mes)")
-    st.caption("Usa esta lupa para ver los gastos reales exactos que componen los números de las tablas de arriba.")
-    
-    col_lupa1, col_lupa2 = st.columns(2)
-    lupa_mes = col_lupa1.selectbox("1. Selecciona el Mes a investigar:", MESES_ORDEN, index=MESES_ORDEN.index(st.session_state.mes_seleccionado))
-    
-    df_reales_mes = df_mov[(df_mov['mes'] == lupa_mes) & (df_mov['es_real'] == 1)]
-    
-    if not df_reales_mes.empty:
-        lupa_concepto = col_lupa2.selectbox("2. Selecciona el Concepto:", sorted(df_reales_mes['concepto'].unique()))
-        df_lupa_show = df_reales_mes[df_reales_mes['concepto'] == lupa_concepto].sort_values(by='fecha_exacta', ascending=False)
-        
-        st.markdown(f"**Tickets reales encontrados para {lupa_concepto} en {lupa_mes} ({len(df_lupa_show)} movimientos):**")
-        for _, row in df_lupa_show.iterrows():
-            f_str = row['fecha_exacta'] if pd.notna(row['fecha_exacta']) else "Sin fecha"
-            desc = row['descripcion_original'] if pd.notna(row['descripcion_original']) and str(row['descripcion_original']).lower() != "nan" else row['concepto']
-            st.write(f"- 📅 {f_str} | _{desc}_ | **{row['importe']:,.2f} €**")
-    else:
-        col_lupa2.info(f"No hay tickets reales cargados del banco en {lupa_mes} todavía.")
-
-    st.markdown("---")
     df_pendientes = df_mov[(df_mov['bloque'] == 'PENDIENTE') & (df_mov['tipo'] == 'GASTO')]
     if not df_pendientes.empty:
         total_pend_anual = df_pendientes['importe'].sum()
         st.markdown(f'<div class="block-header-pendientes">❓ PENDIENTES DE CATEGORIZAR (TODO EL AÑO) | TOTAL: {total_pend_anual:,.2f} €</div>', unsafe_allow_html=True)
-        st.caption("💡 Puedes usar la casilla izquierda para seleccionar varios y agruparlos de golpe, o el botón derecho para uno a uno.")
         
         selected_ids_anual = []
         for _, row in df_pendientes.iterrows():
@@ -637,7 +601,6 @@ elif st.session_state.vista_nivel == 'ANUAL':
                 st.session_state.vista_nivel = 'ENSENAR_REGLA'
                 st.rerun()
                 
-        # 🆕 PANEL DE CATEGORIZACIÓN MASIVA (ANUAL)
         if selected_ids_anual:
             st.markdown(f'<div class="panel-masivo">', unsafe_allow_html=True)
             st.markdown(f"#### 🚀 Categorización Masiva ({len(selected_ids_anual)} seleccionados)")
@@ -691,6 +654,17 @@ elif st.session_state.vista_nivel == 'MENSUAL':
         st.rerun()
         
     with col_bank.expander("📥 Importar Extracto Bancario", expanded=False):
+        
+        # 🆕 AQUÍ ESTÁ EL NUEVO INTERRUPTOR FRIKI
+        modo_importacion = st.radio(
+            "¿Cómo quieres procesar las fechas de este Excel?",
+            [
+                f"1️⃣ Modo Ciclo de Nómina (Forzar todos los tickets al mes activo: {st.session_state.mes_seleccionado})", 
+                "2️⃣ Modo Calendario (Repartir automáticamente según la fecha del ticket)"
+            ],
+            help="El Modo 1 es ideal si tu mes va de nómina a nómina (ej: del 28 de un mes al 27 del siguiente). El Modo 2 es mejor si subes el extracto de un año entero de golpe."
+        )
+        
         uploaded_bank = st.file_uploader("Subir Excel/CSV:", type=["xlsx", "xls", "csv"])
         if uploaded_bank:
             try:
@@ -742,7 +716,14 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                         f_dt = pd.to_datetime(f_str_temp, dayfirst=True, errors='coerce')
                                         
                                 if f_dt and pd.notna(f_dt):
-                                    a_dest, m_dest, f_str = f_dt.year, MESES_MAPPING_NUM.get(f_dt.month, m_dest), f_dt.strftime("%Y-%m-%d")
+                                    f_str = f_dt.strftime("%Y-%m-%d")
+                                    # 🆕 LA MAGIA DEL INTERRUPTOR APLICADA AQUÍ
+                                    if "Ciclo de Nómina" in modo_importacion:
+                                        a_dest = anio_sel
+                                        m_dest = st.session_state.mes_seleccionado
+                                    else:
+                                        a_dest = f_dt.year
+                                        m_dest = MESES_MAPPING_NUM.get(f_dt.month, m_dest)
                                     
                             imp_abs = abs(importe_val)
                             es_dup = False
@@ -788,7 +769,7 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                 text("INSERT INTO meses_cerrados (anio, mes) VALUES (:anio, :mes) ON CONFLICT (anio, mes) DO NOTHING"),
                                 {"anio": int(anio_sel), "mes": str(st.session_state.mes_seleccionado)}
                             )
-                        st.success(f"¡{len(registros)} registros guardados!")
+                        st.success(f"¡{len(registros)} registros guardados en {st.session_state.mes_seleccionado}!")
                     else: st.warning("No se importó nada. Todo estaba duplicado.")
                     time.sleep(2)
                     st.rerun()
@@ -954,16 +935,13 @@ elif st.session_state.vista_nivel == 'MENSUAL':
     if not df_pendientes.empty:
         total_pendientes_mes = df_pendientes['importe'].sum()
         st.markdown(f'<div class="block-header-pendientes">❓ PENDIENTES DE CATEGORIZAR ESTE MES | TOTAL: {total_pendientes_mes:,.2f} €</div>', unsafe_allow_html=True)
-        st.caption("💡 **Truco Friki:** Marca la casilla izquierda de los movimientos (ej: tus gastos en Santander) para agruparlos de golpe, o usa el botón derecho para ir uno a uno.")
         
         selected_ids_mes = []
         for _, row in df_pendientes.iterrows():
             c0, c1, c2, c3, c4 = st.columns([0.5, 2, 4.5, 2, 2])
             
-            # 🆕 CASILLA PARA SELECCIÓN MASIVA
             is_checked = c0.checkbox("", key=f"chk_mes_{row['id']}")
-            if is_checked:
-                selected_ids_mes.append(row['id'])
+            if is_checked: selected_ids_mes.append(row['id'])
                 
             f_str = row['fecha_exacta'] if pd.notna(row['fecha_exacta']) else "Sin fecha"
             desc_orig = row['descripcion_original'] if pd.notna(row['descripcion_original']) else row['concepto']
@@ -975,14 +953,13 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                 st.session_state.vista_nivel = 'ENSENAR_REGLA'
                 st.rerun()
 
-        # 🆕 PANEL DE CATEGORIZACIÓN MASIVA (MENSUAL)
         if selected_ids_mes:
             st.markdown(f'<div class="panel-masivo">', unsafe_allow_html=True)
             st.markdown(f"#### 🚀 Categorización Masiva ({len(selected_ids_mes)} seleccionados)")
             c_t, c_b, c_c = st.columns(3)
             
             t_mas = c_t.selectbox("Tipo:", ["GASTO", "INGRESO"], key="t_mas_m")
-            b_mas = c_b.selectbox("Bloque Destino:", BLOQUES_ORDEN, index=5, key="b_mas_m") # Default 5 = GASTOS PERSONALES
+            b_mas = c_b.selectbox("Bloque Destino:", BLOQUES_ORDEN, index=5, key="b_mas_m")
             
             grupos_disp = obtener_conceptos_bloque(b_mas)
             c_sel = c_c.selectbox("Grupo / Concepto:", ["➕ Crear Nuevo..."] + grupos_disp, key="c_sel_m")
@@ -1029,7 +1006,6 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     
     bloque_in = st.selectbox("2. Selecciona Bloque:", bloques_disponibles, index=idx_bloque)
     
-    # 🆕 Usamos la nueva función global
     grupos_bd = obtener_conceptos_bloque(bloque_in)
         
     idx_grupo = grupos_bd.index(mov['concepto']) + 1 if mov['concepto'] in grupos_bd else 0
