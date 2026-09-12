@@ -7,8 +7,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v6.7 - Interruptor Ciclo de Nómina / Calendario
-st.set_page_config(page_title="Control Económico Familiar v6.7 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v6.8 - Borrado Quirúrgico y Cabecera Flotante
+st.set_page_config(page_title="Control Económico Familiar v6.8 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -315,6 +315,25 @@ st.markdown("""
     .block-header-pendientes { background-color: #991B1B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 25px; margin-bottom: 10px; border-left: 5px solid #F87171;}
     .panel-masivo { background-color: #F8FAFC; color: #0F172A; padding: 15px; border-radius: 6px; border: 2px solid #3B82F6; margin-top: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     
+    /* 🆕 ESTILO PARA LA CABECERA FLOTANTE (STICKY HEADER) */
+    .sticky-header {
+        position: sticky;
+        top: 0;
+        z-index: 999;
+        background-color: #1E1E2F;
+        color: #FFFFFF;
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-size: 18px;
+        font-weight: bold;
+        box-shadow: 0px 4px 12px rgba(0,0,0,0.3);
+        margin-bottom: 20px;
+        border-left: 6px solid #10B981;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
     button[data-testid="baseButton-primary"], 
     div.stButton > button[kind="primary"],
     div.stButton > button[type="primary"] {
@@ -327,7 +346,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v6.7 Cloud")
+st.title("💰 Control Económico Familiar v6.8 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -376,12 +395,19 @@ if st.sidebar.button("🧹 Borrar Reglas de IA Manuales"):
     st.sidebar.success("Cerebro reseteado.")
     time.sleep(1.5); st.rerun()
 
-# ESTE ES EL BOTÓN QUE USARÁS PARA LIMPIAR SIN PERDER REGLAS
-if st.sidebar.button("🧨 Borrar SOLO Movimientos de Banco"):
+# 🆕 NUEVO BOTÓN DE BORRADO QUIRÚRGICO (SOLO EL MES SELECCIONADO)
+mes_actual_str = st.session_state.mes_seleccionado
+if st.sidebar.button(f"🧨 Borrar Banco SOLO de {mes_actual_str} {anio_sel}"):
     with engine.begin() as conn:
-        conn.execute(text("DELETE FROM movimientos WHERE es_real = 1"))
-        conn.execute(text("DELETE FROM meses_cerrados"))
-    st.sidebar.success("Banco borrado. Presupuesto intacto. Reglas guardadas.")
+        conn.execute(
+            text("DELETE FROM movimientos WHERE es_real = 1 AND anio = :anio AND mes = :mes"),
+            {"anio": int(anio_sel), "mes": str(mes_actual_str)}
+        )
+        conn.execute(
+            text("DELETE FROM meses_cerrados WHERE anio = :anio AND mes = :mes"),
+            {"anio": int(anio_sel), "mes": str(mes_actual_str)}
+        )
+    st.sidebar.success(f"¡Movimientos reales de {mes_actual_str} {anio_sel} borrados! El resto del año y tus reglas están a salvo.")
     time.sleep(1.5); st.rerun()
     
 if st.sidebar.button("🔁 Restaurar Presupuesto Base"):
@@ -646,7 +672,13 @@ elif st.session_state.vista_nivel == 'MENSUAL':
     tag_estado = '🟢 MES CONSOLIDADO' if es_cerrado else '🟠 PREVISIÓN FUTURA'
     nombre_mes = MESES_NOMBRES.get(st.session_state.mes_seleccionado, st.session_state.mes_seleccionado).upper()
     
-    st.info(f"📅 **GESTIÓN DE: {nombre_mes} {anio_sel} | {tag_estado}**", icon="ℹ️")
+    # 🆕 CABECERA FLOTANTE (STICKY HEADER)
+    st.markdown(f'''
+        <div class="sticky-header">
+            <span>📅 VISTA ACTIVA: {nombre_mes} {anio_sel}</span>
+            <span style="font-size: 14px; background: rgba(255,255,255,0.1); padding: 4px 10px; border-radius: 4px;">{tag_estado}</span>
+        </div>
+    ''', unsafe_allow_html=True)
     
     col_back, col_bank = st.columns([2, 3])
     if col_back.button("⬅️ Volver a Vista Anual", type="primary"):
@@ -654,15 +686,12 @@ elif st.session_state.vista_nivel == 'MENSUAL':
         st.rerun()
         
     with col_bank.expander("📥 Importar Extracto Bancario", expanded=False):
-        
-        # 🆕 AQUÍ ESTÁ EL NUEVO INTERRUPTOR FRIKI
         modo_importacion = st.radio(
             "¿Cómo quieres procesar las fechas de este Excel?",
             [
                 f"1️⃣ Modo Ciclo de Nómina (Forzar todos los tickets al mes activo: {st.session_state.mes_seleccionado})", 
                 "2️⃣ Modo Calendario (Repartir automáticamente según la fecha del ticket)"
-            ],
-            help="El Modo 1 es ideal si tu mes va de nómina a nómina (ej: del 28 de un mes al 27 del siguiente). El Modo 2 es mejor si subes el extracto de un año entero de golpe."
+            ]
         )
         
         uploaded_bank = st.file_uploader("Subir Excel/CSV:", type=["xlsx", "xls", "csv"])
@@ -717,7 +746,6 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                         
                                 if f_dt and pd.notna(f_dt):
                                     f_str = f_dt.strftime("%Y-%m-%d")
-                                    # 🆕 LA MAGIA DEL INTERRUPTOR APLICADA AQUÍ
                                     if "Ciclo de Nómina" in modo_importacion:
                                         a_dest = anio_sel
                                         m_dest = st.session_state.mes_seleccionado
