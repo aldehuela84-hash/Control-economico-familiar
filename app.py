@@ -7,8 +7,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v6.5 - Ingresos Automáticos desde Ahorro (COMPLETA)
-st.set_page_config(page_title="Control Económico Familiar v6.5 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v6.6 - Categorización Masiva (Modo Viajes)
+st.set_page_config(page_title="Control Económico Familiar v6.6 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -24,6 +24,19 @@ REGLAS_PREDETERMINADAS = [
     ("IBERDROLA", "VIVIENDA", "Luz gas, agua", 0.0),
     ("REPSOL", "COCHES", "Combustible", 0.0)
 ]
+
+# 🆕 Diccionario Maestro Global para evitar repetir código
+DICCIONARIO_EXCEL = {
+    "VIVIENDA": ["Hipoteca chalet", "Hipoteca piso", "Luz gas, agua", "Placas solares", "Telf. Internet.", "Impuestos", "Comunidad"],
+    "COMIDA": ["Alimentacion"],
+    "COCHES": ["Cupra", "Combustible", "Numeritos", "Mantenimiento", "Seguros"],
+    "NIÑOS": ["Gastos peques", "Comedor", "Extraescolares"],
+    "COMPRAS": ["Amazon/Aliexpres", "Ropa", "Hogar"],
+    "GASTOS PERSONALES": ["Ocio", "Psicologo", "Gimanasio", "Seguro Vida", "Abono transporte", "Salud", "Mascotas"],
+    "EXTRAS": ["Cumples / Reyes", "Imprevistos", "Bizum Emitido"],
+    "INGRESOS": ["Nómina Jorge", "Nómina Grego", "Transferencia", "Devolución", "Ingreso Bizum", "Traspaso desde Ahorro"],
+    "TRASPASOS": ["Traspaso entre cuentas"]
+}
 
 # ==========================================
 # 🗄️ CONEXIÓN A BASE DE DATOS (Supabase / SQLite)
@@ -72,6 +85,14 @@ def auto_clasificar(desc):
     if "BIZUM" in d: return "EXTRAS", "Bizum Emitido"
     if any(x in d for x in ["COMISION", "MANTENIMIENTO CUENTA", "LIQUIDACION"]): return "EXTRAS", "Imprevistos"
     return None, None
+
+def obtener_conceptos_bloque(bloque_nombre):
+    # Función útil para alimentar los desplegables de Categorización
+    grupos_bd = pd.read_sql_query(text("SELECT DISTINCT concepto FROM movimientos WHERE bloque = :b"), engine, params={"b": bloque_nombre})['concepto'].tolist()
+    for c in DICCIONARIO_EXCEL.get(bloque_nombre, []):
+        if c not in grupos_bd:
+            grupos_bd.append(c)
+    return sorted(grupos_bd)
 
 def restaurar_presupuesto_base():
     with engine.begin() as conn:
@@ -237,7 +258,11 @@ def simular_mes_test(anio, mes):
         ("COLEGIO AMPA", -50.00),
         ("COMEDOR ESCOLAR", -130.00),
         ("TRANSFERENCIA A ALBA", -150.00),
-        ("TRANSFERENCIA PISO LUZ", -60.00)
+        ("TRANSFERENCIA PISO LUZ", -60.00),
+        # Simulamos un mini viaje sin categorizar
+        ("REST EL CASTILLO SANTILLANA", -9.50),
+        ("VIA SANTANDER ES", -7.80),
+        ("PARQUE NATURALEZA CABARCENO", -110.00)
     ]
     
     reglas_df = pd.read_sql_query(text("SELECT patron, bloque, concepto, COALESCE(importe_exacto, 0.0) as importe_exacto FROM reglas_categorias"), engine)
@@ -291,6 +316,7 @@ st.markdown("""
     .block-header-ahorro { background-color: #4C1D95; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #8B5CF6;}
     .block-header-traspaso { background-color: #475569; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #94A3B8;}
     .block-header-pendientes { background-color: #991B1B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 25px; margin-bottom: 10px; border-left: 5px solid #F87171;}
+    .panel-masivo { background-color: #F8FAFC; color: #0F172A; padding: 15px; border-radius: 6px; border: 2px solid #3B82F6; margin-top: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     
     button[data-testid="baseButton-primary"], 
     div.stButton > button[kind="primary"],
@@ -304,7 +330,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v6.5 Cloud")
+st.title("💰 Control Económico Familiar v6.6 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -369,7 +395,7 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("🧪 MODO DESARROLLADOR")
 if st.sidebar.button("🔴 Ejecutar Test Automático (Simular Mes)", type="primary", use_container_width=True):
     simular_mes_test(anio_sel, st.session_state.mes_seleccionado)
-    st.sidebar.success(f"¡Se han inyectado ~30 tickets en {st.session_state.mes_seleccionado} {anio_sel}!")
+    st.sidebar.success(f"¡Se han inyectado ~35 tickets en {st.session_state.mes_seleccionado} {anio_sel}!")
     time.sleep(1.5)
     st.rerun()
 
@@ -496,16 +522,12 @@ elif st.session_state.vista_nivel == 'ANUAL':
             if st.form_submit_button("💾 Guardar en la Hucha") and c_ahorro_an and i_ahorro_an > 0:
                 imp_final = -float(i_ahorro_an) if "Retiro" in tipo_ahorro_an else float(i_ahorro_an)
                 with engine.begin() as conn:
-                    # Guardamos el movimiento en la hucha
                     conn.execute(text("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (:a, :m, :c, :i, :f)"), {"a": int(anio_sel), "m": str(m_ret_anual), "c": str(c_ahorro_an), "i": imp_final, "f": str(f_ahorro_an)})
-                    
-                    # 🆕 v6.5: Generar el ingreso de manera automática en la cuenta del día a día si sacamos dinero de la hucha
                     if imp_final < 0:
                         conn.execute(
                             text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:a, :m, :b, :c, :t, :i, :er, :f, :d)"),
                             {"a": int(anio_sel), "m": str(m_ret_anual), "b": "INGRESOS", "c": "Traspaso desde Ahorro", "t": "INGRESO", "i": abs(imp_final), "er": 1, "f": str(f_ahorro_an), "d": f"Traspaso automático ({c_ahorro_an})"}
                         )
-                        
                 st.success(f"Movimiento registrado en la Hucha ({m_ret_anual} {anio_sel}) e ingreso generado con éxito.")
                 time.sleep(1.5); st.rerun()
 
@@ -560,7 +582,6 @@ elif st.session_state.vista_nivel == 'ANUAL':
             pivot_b['TOTAL ANUAL'] = pivot_b.sum(axis=1)
             st.dataframe(pivot_b.style.format("{:,.2f} €"), use_container_width=True)
 
-    # 🆕 ZONA PARA MOSTRAR TRASPASOS EN LA VISTA ANUAL
     df_tras_anual = df_mov_limpio[df_mov_limpio['tipo'] == 'TRASPASO']
     if not df_tras_anual.empty:
         total_tras_anual = df_tras_anual['importe'].sum()
@@ -596,18 +617,51 @@ elif st.session_state.vista_nivel == 'ANUAL':
     if not df_pendientes.empty:
         total_pend_anual = df_pendientes['importe'].sum()
         st.markdown(f'<div class="block-header-pendientes">❓ PENDIENTES DE CATEGORIZAR (TODO EL AÑO) | TOTAL: {total_pend_anual:,.2f} €</div>', unsafe_allow_html=True)
+        st.caption("💡 Puedes usar la casilla izquierda para seleccionar varios y agruparlos de golpe, o el botón derecho para uno a uno.")
+        
+        selected_ids_anual = []
         for _, row in df_pendientes.iterrows():
-            c1, c2, c3, c4 = st.columns([2, 5, 2, 2])
+            c0, c1, c2, c3, c4 = st.columns([0.5, 2, 4.5, 2, 2])
+            is_checked = c0.checkbox("", key=f"chk_anual_{row['id']}")
+            if is_checked: selected_ids_anual.append(row['id'])
+            
             f_str = row['fecha_exacta'] if pd.notna(row['fecha_exacta']) else "Sin fecha"
             desc_orig = row['descripcion_original'] if pd.notna(row['descripcion_original']) else row['concepto']
             c1.write(f"📅 {f_str} **({row['mes']})**")
             c2.write(f"_{desc_orig}_")
             c3.write(f"**{row['importe']:,.2f} €**")
-            if c4.button("🧠 Categorizar", key=f"cat_anual_{row['id']}"):
+            
+            if c4.button("🧠 Uno a Uno", key=f"cat_anual_{row['id']}"):
                 st.session_state.enseñar_id = row['id']
                 st.session_state.vista_anterior = 'ANUAL'
                 st.session_state.vista_nivel = 'ENSENAR_REGLA'
                 st.rerun()
+                
+        # 🆕 PANEL DE CATEGORIZACIÓN MASIVA (ANUAL)
+        if selected_ids_anual:
+            st.markdown(f'<div class="panel-masivo">', unsafe_allow_html=True)
+            st.markdown(f"#### 🚀 Categorización Masiva ({len(selected_ids_anual)} seleccionados)")
+            c_t, c_b, c_c = st.columns(3)
+            t_mas = c_t.selectbox("Tipo:", ["GASTO", "INGRESO"], key="t_mas_a")
+            b_mas = c_b.selectbox("Bloque Destino:", BLOQUES_ORDEN, index=5, key="b_mas_a")
+            grupos_disp = obtener_conceptos_bloque(b_mas)
+            c_sel = c_c.selectbox("Grupo / Concepto:", ["➕ Crear Nuevo..."] + grupos_disp, key="c_sel_a")
+            c_final = st.text_input("Nombre del nuevo grupo (Ej: Viaje a Santander):", key="c_txt_a") if c_sel == "➕ Crear Nuevo..." else c_sel
+            
+            if st.button("💾 MOVER LOS SELECCIONADOS AQUÍ", type="primary", use_container_width=True, key="btn_mas_a"):
+                if c_final:
+                    with engine.begin() as conn:
+                        for mid in selected_ids_anual:
+                            conn.execute(
+                                text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t WHERE id = :id"),
+                                {"b": b_mas, "c": c_final.strip(), "t": t_mas, "id": mid}
+                            )
+                    st.success(f"¡{len(selected_ids_anual)} movimientos guardados en {b_mas} -> {c_final}!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Por favor, introduce un nombre para el concepto.")
+            st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
 # NIVEL 2: VISTA DETALLADA DEL MES
@@ -782,10 +836,7 @@ elif st.session_state.vista_nivel == 'MENSUAL':
             f_ahorro = st.date_input("Fecha del gasto extraordinario:")
             if st.form_submit_button("Guardar Retiro") and c_ahorro and i_ahorro > 0:
                 with engine.begin() as conn:
-                    # Guardamos el retiro en la tabla de ahorros (en negativo)
                     conn.execute(text("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (:a, :m, :c, :i, :f)"), {"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "c": str(c_ahorro), "i": -float(i_ahorro), "f": str(f_ahorro)})
-                    
-                    # 🆕 v6.5: Generamos un ingreso en cuenta equivalente de manera automática
                     conn.execute(
                         text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:a, :m, :b, :c, :t, :i, :er, :f, :d)"),
                         {"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "b": "INGRESOS", "c": "Traspaso desde Ahorro", "t": "INGRESO", "i": float(i_ahorro), "er": 1, "f": str(f_ahorro), "d": f"Traspaso automático ({c_ahorro})"}
@@ -874,7 +925,6 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                             st.session_state.vista_nivel = 'DETALLE_AGRUPADO'
                             st.rerun()
 
-    # 🆕 ZONA PARA MOSTRAR TRASPASOS EN EL MES
     df_tras_mes = df_mes[df_mes['tipo'] == 'TRASPASO']
     if not df_tras_mes.empty:
         total_tras_mes = df_mes_limpio[df_mes_limpio['tipo'] == 'TRASPASO']['importe'].sum()
@@ -904,16 +954,55 @@ elif st.session_state.vista_nivel == 'MENSUAL':
     if not df_pendientes.empty:
         total_pendientes_mes = df_pendientes['importe'].sum()
         st.markdown(f'<div class="block-header-pendientes">❓ PENDIENTES DE CATEGORIZAR ESTE MES | TOTAL: {total_pendientes_mes:,.2f} €</div>', unsafe_allow_html=True)
+        st.caption("💡 **Truco Friki:** Marca la casilla izquierda de los movimientos (ej: tus gastos en Santander) para agruparlos de golpe, o usa el botón derecho para ir uno a uno.")
+        
+        selected_ids_mes = []
         for _, row in df_pendientes.iterrows():
-            c1, c2, c3, c4 = st.columns([2, 5, 2, 2])
+            c0, c1, c2, c3, c4 = st.columns([0.5, 2, 4.5, 2, 2])
+            
+            # 🆕 CASILLA PARA SELECCIÓN MASIVA
+            is_checked = c0.checkbox("", key=f"chk_mes_{row['id']}")
+            if is_checked:
+                selected_ids_mes.append(row['id'])
+                
             f_str = row['fecha_exacta'] if pd.notna(row['fecha_exacta']) else "Sin fecha"
             desc_orig = row['descripcion_original'] if pd.notna(row['descripcion_original']) else row['concepto']
             c1.write(f"📅 {f_str}"); c2.write(f"_{desc_orig}_"); c3.write(f"**{row['importe']:,.2f} €**")
-            if c4.button("🧠 Categorizar", key=f"cat_mes_{row['id']}"):
+            
+            if c4.button("🧠 Uno a Uno", key=f"cat_mes_{row['id']}"):
                 st.session_state.enseñar_id = row['id']
                 st.session_state.vista_anterior = 'MENSUAL'
                 st.session_state.vista_nivel = 'ENSENAR_REGLA'
                 st.rerun()
+
+        # 🆕 PANEL DE CATEGORIZACIÓN MASIVA (MENSUAL)
+        if selected_ids_mes:
+            st.markdown(f'<div class="panel-masivo">', unsafe_allow_html=True)
+            st.markdown(f"#### 🚀 Categorización Masiva ({len(selected_ids_mes)} seleccionados)")
+            c_t, c_b, c_c = st.columns(3)
+            
+            t_mas = c_t.selectbox("Tipo:", ["GASTO", "INGRESO"], key="t_mas_m")
+            b_mas = c_b.selectbox("Bloque Destino:", BLOQUES_ORDEN, index=5, key="b_mas_m") # Default 5 = GASTOS PERSONALES
+            
+            grupos_disp = obtener_conceptos_bloque(b_mas)
+            c_sel = c_c.selectbox("Grupo / Concepto:", ["➕ Crear Nuevo..."] + grupos_disp, key="c_sel_m")
+            
+            c_final = st.text_input("Nombre del nuevo grupo (Ej: Viaje a Santander):", key="c_txt_m") if c_sel == "➕ Crear Nuevo..." else c_sel
+            
+            if st.button("💾 MOVER TODOS LOS SELECCIONADOS AQUÍ", type="primary", use_container_width=True, key="btn_mas_m"):
+                if c_final:
+                    with engine.begin() as conn:
+                        for mid in selected_ids_mes:
+                            conn.execute(
+                                text("UPDATE movimientos SET bloque = :b, concepto = :c, tipo = :t WHERE id = :id"),
+                                {"b": b_mas, "c": c_final.strip(), "t": t_mas, "id": mid}
+                            )
+                    st.success(f"¡{len(selected_ids_mes)} movimientos guardados de golpe en {b_mas} -> {c_final}!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Por favor, introduce un nombre para el concepto.")
+            st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
 # NIVEL 3: ENSEÑAR REGLA Y CORREGIR ERRORES
@@ -927,7 +1016,6 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     st.subheader(f"🧠 Categorizar / Modificar Movimiento: {desc_orig}")
     st.info(f"Importe actual guardado: **{mov['importe']:,.2f} €** | Fecha: {mov['fecha_exacta']} | Mes: **{mov['mes']} {mov['anio']}**")
     
-    # 🆕 AÑADIDA LA OPCIÓN DE TRASPASO
     tipo_in_opts = ["Dinero que SALE (GASTO)", "Dinero que ENTRA (INGRESO)", "🔄 Mover dinero entre mis cuentas (TRASPASO NEUTRO)"]
     idx_tipo = 0 if mov['tipo']=='GASTO' else (1 if mov['tipo']=='INGRESO' else 2)
     tipo_in = st.radio("1. Tipo de movimiento:", tipo_in_opts, index=idx_tipo)
@@ -941,20 +1029,8 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
     
     bloque_in = st.selectbox("2. Selecciona Bloque:", bloques_disponibles, index=idx_bloque)
     
-    grupos_bd = pd.read_sql_query(text("SELECT DISTINCT concepto FROM movimientos WHERE bloque = :b"), engine, params={"b": bloque_in})['concepto'].tolist()
-    diccionario_excel = {
-        "VIVIENDA": ["Hipoteca chalet", "Hipoteca piso", "Luz gas, agua", "Placas solares", "Telf. Internet.", "Impuestos", "Comunidad"],
-        "COMIDA": ["Alimentacion"],
-        "COCHES": ["Cupra", "Combustible", "Numeritos", "Mantenimiento", "Seguros"],
-        "NIÑOS": ["Gastos peques", "Comedor", "Extraescolares"],
-        "COMPRAS": ["Amazon/Aliexpres", "Ropa", "Hogar"],
-        "GASTOS PERSONALES": ["Ocio", "Psicologo", "Gimanasio", "Seguro Vida", "Abono transporte", "Salud", "Mascotas"],
-        "EXTRAS": ["Cumples / Reyes", "Imprevistos", "Bizum Emitido"],
-        "INGRESOS": ["Nómina Jorge", "Nómina Grego", "Transferencia", "Devolución", "Ingreso Bizum", "Traspaso desde Ahorro"],
-        "TRASPASOS": ["Traspaso entre cuentas"]
-    }
-    for concepto_base in diccionario_excel.get(bloque_in, []):
-        if concepto_base not in grupos_bd: grupos_bd.append(concepto_base)
+    # 🆕 Usamos la nueva función global
+    grupos_bd = obtener_conceptos_bloque(bloque_in)
         
     idx_grupo = grupos_bd.index(mov['concepto']) + 1 if mov['concepto'] in grupos_bd else 0
     grupo_sel = st.selectbox("3. Selecciona Grupo / Concepto:", ["➕ Crear Nuevo Grupo..."] + grupos_bd, index=idx_grupo)
