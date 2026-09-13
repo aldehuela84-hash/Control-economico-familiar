@@ -8,8 +8,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v7.9 - Doble Cuenta Independiente (Operativa + Ahorro) con Extractos Bancarios y Traspasos Cruzados
-st.set_page_config(page_title="Control Económico Familiar v7.9 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.9.1 - Corrección de Migración de Base de Datos (Columna Cuenta)
+st.set_page_config(page_title="Control Económico Familiar v7.9.1 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -160,13 +160,21 @@ def init_db():
             conn.execute(text('''CREATE TABLE IF NOT EXISTS reglas_categorias (id INTEGER PRIMARY KEY AUTOINCREMENT, patron TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, importe_exacto REAL DEFAULT 0.0)'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS configuracion (clave VARCHAR(50) PRIMARY KEY, valor REAL NOT NULL)'''))
 
-        # Migración silenciosa por si la tabla ya existía sin la columna 'cuenta'
+        # 🛠️ ASEGURAR COLUMNAS EN TABLAS EXISTENTES (MIGRACIÓN SEGURA)
         try:
             conn.execute(text("ALTER TABLE movimientos ADD COLUMN IF NOT EXISTS cuenta VARCHAR(20) DEFAULT 'operativa'"))
         except:
             pass
+        
         try:
             conn.execute(text("ALTER TABLE meses_cerrados ADD COLUMN IF NOT EXISTS cuenta VARCHAR(20) DEFAULT 'operativa'"))
+        except:
+            pass
+            
+        # Si la primary key antigua de meses_cerrados bloquea, la recreamos de forma limpia
+        try:
+            conn.execute(text("ALTER TABLE meses_cerrados DROP CONSTRAINT IF EXISTS meses_cerrados_pkey"))
+            conn.execute(text("ALTER TABLE meses_cerrados ADD PRIMARY KEY (anio, mes, cuenta)"))
         except:
             pass
 
@@ -288,7 +296,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v7.9 Cloud")
+st.title("💰 Control Económico Familiar v7.9.1 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -303,7 +311,11 @@ if 'enseñar_id' not in st.session_state: st.session_state.enseñar_id = None
 # ==========================================
 st.sidebar.header("🕹️ Panel de Navegación")
 
-meses_cerrados_df = pd.read_sql_query(text("SELECT anio, mes, cuenta FROM meses_cerrados"), engine)
+try:
+    meses_cerrados_df = pd.read_sql_query(text("SELECT anio, mes, cuenta FROM meses_cerrados"), engine)
+except:
+    meses_cerrados_df = pd.DataFrame(columns=['anio', 'mes', 'cuenta'])
+
 saldo_inicial_db = pd.read_sql_query(text("SELECT valor FROM configuracion WHERE clave = 'saldo_inicial_sep_2026'"), engine).iloc[0]['valor']
 
 anio_sel = st.sidebar.selectbox("Seleccionar Año:", list(range(2026, 2036)), index=0)
