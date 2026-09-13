@@ -7,8 +7,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v6.8 - Borrado Quirúrgico y Cabecera Flotante
-st.set_page_config(page_title="Control Económico Familiar v6.8 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v6.9 - Controles rápidos +/- en Previsiones Mensuales
+st.set_page_config(page_title="Control Económico Familiar v6.9 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -315,7 +315,7 @@ st.markdown("""
     .block-header-pendientes { background-color: #991B1B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 25px; margin-bottom: 10px; border-left: 5px solid #F87171;}
     .panel-masivo { background-color: #F8FAFC; color: #0F172A; padding: 15px; border-radius: 6px; border: 2px solid #3B82F6; margin-top: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     
-    /* 🆕 ESTILO PARA LA CABECERA FLOTANTE (STICKY HEADER) */
+    /* 🆕 CABECERA FLOTANTE (STICKY HEADER) */
     .sticky-header {
         position: sticky;
         top: 0;
@@ -346,7 +346,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v6.8 Cloud")
+st.title("💰 Control Económico Familiar v6.9 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -395,7 +395,6 @@ if st.sidebar.button("🧹 Borrar Reglas de IA Manuales"):
     st.sidebar.success("Cerebro reseteado.")
     time.sleep(1.5); st.rerun()
 
-# 🆕 NUEVO BOTÓN DE BORRADO QUIRÚRGICO (SOLO EL MES SELECCIONADO)
 mes_actual_str = st.session_state.mes_seleccionado
 if st.sidebar.button(f"🧨 Borrar Banco SOLO de {mes_actual_str} {anio_sel}"):
     with engine.begin() as conn:
@@ -439,7 +438,7 @@ if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
             with st.expander(f"🟢 **{r['concepto']}** | Importe actual en {st.session_state.mes_seleccionado}: **{r['importe']:,.2f} €**"):
                 with st.form(f"form_edit_prev_{r['id']}"):
                     n_imp = st.number_input("Nuevo importe previsto (€):", value=float(r['importe']), step=10.0)
-                    modo_alcance = st.radio("¿A qué meses aplicar este cambio?", ["A) Solo a este mes", "B) Desde este mes en adelante (Hasta Dic)", "C) A todos los 12 meses del año"])
+                    modo_alcance = st.radio("¿A qué meses aplicar هذا cambio?", ["A) Solo a este mes", "B) Desde este mes en adelante (Hasta Dic)", "C) A todos los 12 meses del año"])
                     c_act1, c_act2 = st.columns([3, 1])
                     sub_btn = c_act1.form_submit_button("💾 Guardar Cambios")
                     del_btn = c_act2.form_submit_button("🗑️ Eliminar Previsión")
@@ -867,7 +866,30 @@ elif st.session_state.vista_nivel == 'MENSUAL':
             df_mostrar = df_mostrar.sort_values(by='fecha_exacta', ascending=False)
             
             with st.expander(f"{tag} | **{concepto}** | {total_concepto:,.2f} € | *({num_movs} movimientos)*"):
+                # 🆕 SI ES PREVISIÓN PURA (NO REAL), AÑADIMOS BOTONES RÁPIDOS +/-
+                if not has_real and len(df_c) == 1:
+                    r_prev_item = df_c.iloc[0]
+                    cp1, cp2, cp3, cp4 = st.columns([3, 1, 1, 2])
+                    cp1.write(f"Previsión actual: **{r_prev_item['importe']:,.2f} €**")
+                    if cp2.button("➖ 10€", key=f"p_minus_{r_prev_item['id']}"):
+                        nuevo_imp_val = max(0.0, float(r_prev_item['importe']) - 10.0)
+                        with engine.begin() as conn:
+                            conn.execute(text("UPDATE movimientos SET importe = :imp WHERE id = :id"), {"imp": nuevo_imp_val, "id": int(r_prev_item['id'])})
+                        st.rerun()
+                    if cp3.button("➕ 10€", key=f"p_plus_{r_prev_item['id']}"):
+                        nuevo_imp_val = float(r_prev_item['importe']) + 10.0
+                        with engine.begin() as conn:
+                            conn.execute(text("UPDATE movimientos SET importe = :imp WHERE id = :id"), {"imp": nuevo_imp_val, "id": int(r_prev_item['id'])})
+                        st.rerun()
+                    if cp4.button("✏️ Cambiar", key=f"edit_prev_ing_{r_prev_item['id']}"):
+                        st.session_state.enseñar_id = r_prev_item['id']
+                        st.session_state.vista_anterior = 'MENSUAL'
+                        st.session_state.vista_nivel = 'ENSENAR_REGLA'
+                        st.rerun()
+                    st.markdown("---")
+
                 for _, row in df_mostrar.iterrows():
+                    if not has_real and len(df_c) == 1: continue # Ya mostrado arriba en los botones rápidos
                     f_str = row['fecha_exacta'] if pd.notna(row['fecha_exacta']) else "Sin fecha"
                     desc = row['descripcion_original'] if pd.notna(row['descripcion_original']) and str(row['descripcion_original']).lower() != "nan" else row['concepto']
                     
@@ -894,7 +916,29 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                 df_mostrar = df_mostrar.sort_values(by='fecha_exacta', ascending=False)
                 
                 with st.expander(f"{tag} | **Alimentación (Total del mes)** | {total_concepto:,.2f} € | *({num_movs} movimientos)*"):
+                    if not has_real and len(df_b) == 1:
+                        r_prev_item = df_b.iloc[0]
+                        cp1, cp2, cp3, cp4 = st.columns([3, 1, 1, 2])
+                        cp1.write(f"Previsión actual: **{r_prev_item['importe']:,.2f} €**")
+                        if cp2.button("➖ 10€", key=f"p_minus_com_{r_prev_item['id']}"):
+                            nuevo_imp_val = max(0.0, float(r_prev_item['importe']) - 10.0)
+                            with engine.begin() as conn:
+                                conn.execute(text("UPDATE movimientos SET importe = :imp WHERE id = :id"), {"imp": nuevo_imp_val, "id": int(r_prev_item['id'])})
+                            st.rerun()
+                        if cp3.button("➕ 10€", key=f"p_plus_com_{r_prev_item['id']}"):
+                            nuevo_imp_val = float(r_prev_item['importe']) + 10.0
+                            with engine.begin() as conn:
+                                conn.execute(text("UPDATE movimientos SET importe = :imp WHERE id = :id"), {"imp": nuevo_imp_val, "id": int(r_prev_item['id'])})
+                            st.rerun()
+                        if cp4.button("✏️ Cambiar", key=f"edit_prev_com_{r_prev_item['id']}"):
+                            st.session_state.enseñar_id = r_prev_item['id']
+                            st.session_state.vista_anterior = 'MENSUAL'
+                            st.session_state.vista_nivel = 'ENSENAR_REGLA'
+                            st.rerun()
+                        st.markdown("---")
+
                     for _, row in df_mostrar.iterrows():
+                        if not has_real and len(df_b) == 1: continue
                         f_str = row['fecha_exacta'] if pd.notna(row['fecha_exacta']) else "Sin fecha"
                         desc = row['descripcion_original'] if pd.notna(row['descripcion_original']) and str(row['descripcion_original']).lower() != "nan" else row['concepto']
                         
@@ -916,7 +960,30 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                     df_mostrar = df_mostrar.sort_values(by='fecha_exacta', ascending=False)
                     
                     with st.expander(f"{tag} | **{concepto}** | {total_concepto:,.2f} € | *({num_movs} movimientos)*"):
+                        # 🆕 BOTONES RÁPIDOS +/- SI ES PREVISIÓN PURA
+                        if not has_real and len(df_c) == 1:
+                            r_prev_item = df_c.iloc[0]
+                            cp1, cp2, cp3, cp4 = st.columns([3, 1, 1, 2])
+                            cp1.write(f"Previsión actual: **{r_prev_item['importe']:,.2f} €**")
+                            if cp2.button("➖ 10€", key=f"p_minus_c_{r_prev_item['id']}"):
+                                nuevo_imp_val = max(0.0, float(r_prev_item['importe']) - 10.0)
+                                with engine.begin() as conn:
+                                    conn.execute(text("UPDATE movimientos SET importe = :imp WHERE id = :id"), {"imp": nuevo_imp_val, "id": int(r_prev_item['id'])})
+                                st.rerun()
+                            if cp3.button("➕ 10€", key=f"p_plus_c_{r_prev_item['id']}"):
+                                nuevo_imp_val = float(r_prev_item['importe']) + 10.0
+                                with engine.begin() as conn:
+                                    conn.execute(text("UPDATE movimientos SET importe = :imp WHERE id = :id"), {"imp": nuevo_imp_val, "id": int(r_prev_item['id'])})
+                                st.rerun()
+                            if cp4.button("✏️ Cambiar", key=f"edit_prev_c_{r_prev_item['id']}"):
+                                st.session_state.enseñar_id = r_prev_item['id']
+                                st.session_state.vista_anterior = 'MENSUAL'
+                                st.session_state.vista_nivel = 'ENSENAR_REGLA'
+                                st.rerun()
+                            st.markdown("---")
+
                         for _, row in df_mostrar.iterrows():
+                            if not has_real and len(df_c) == 1: continue
                             f_str = row['fecha_exacta'] if pd.notna(row['fecha_exacta']) else "Sin fecha"
                             desc = row['descripcion_original'] if pd.notna(row['descripcion_original']) and str(row['descripcion_original']).lower() != "nan" else row['concepto']
                             
