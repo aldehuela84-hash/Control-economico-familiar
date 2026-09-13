@@ -8,8 +8,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v7.7 - Recuperación y Blindaje de Ingresos Reales (Nómina Jorge + Grego)
-st.set_page_config(page_title="Control Económico Familiar v7.7 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.8 - Corrección Crítica: Blindaje de Nómina Jorge frente a Traspasos
+st.set_page_config(page_title="Control Económico Familiar v7.8 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -60,16 +60,17 @@ is_postgres = "postgresql" in str(engine.url)
 def auto_clasificar(desc):
     d = str(desc).upper()
     
-    # 🛡️ BLINDAJE ABSOLUTO 1: Si es de Grego (o variaciones de texto como GREGORIA, MARCHAL), JAMÁS puede ser de Jorge
+    # 🛡️ BLINDAJE ABSOLUTO 1: Nómina de Grego
     if any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]):
         return "INGRESOS", "Nómina Grego"
         
-    if "TRANSFERENCIA" in d and ("JORGE" in d or "BBVA" in d or "ING" in d): 
-        return "TRASPASOS", "Movimiento entre cuentas"
-        
-    # 🛡️ BLINDAJE ABSOLUTO 2: Nómina Jorge (EXCLUYENDO totalmente cualquier mención a Grego)
+    # 🛡️ BLINDAJE ABSOLUTO 2: Nómina de Jorge (Movido ARRIBA para que "TRANSFERENCIA" no lo pise)
     if any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "PENSIÓN", "SALARIO", "GUARDIA CIVIL", "DIRECCION GENERAL DE LA POLICIA"]) and not any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]): 
         return "INGRESOS", "Nómina Jorge"
+        
+    # 🔄 Traspasos internos (Evaluado DESPUÉS de las nóminas)
+    if "TRANSFERENCIA" in d and ("JORGE" in d or "BBVA" in d or "ING" in d): 
+        return "TRASPASOS", "Movimiento entre cuentas"
         
     if "BIZUM" in d and ("FAVOR" in d or "RECIBIDO" in d): return "INGRESOS", "Ingreso Bizum"
     if "DEVOLUCION" in d or "RETROCESION" in d or "ABONO" in d: return "INGRESOS", "Devoluciones"
@@ -268,7 +269,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v7.7 Cloud")
+st.title("💰 Control Económico Familiar v7.8 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
