@@ -1,14 +1,15 @@
 import os
 import time
 import random
+import json
 from datetime import datetime
 import pandas as pd
 import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v6.10 - Correcciones Suma Pendientes, Cabecera Fija y Ajuste Rápido de Previsiones
-st.set_page_config(page_title="Control Económico Familiar v6.10 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.2 - Incluye Copia de Seguridad y Restauración del Cerebro (Reglas)
+st.set_page_config(page_title="Control Económico Familiar v7.2 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -59,7 +60,6 @@ is_postgres = "postgresql" in str(engine.url)
 def auto_clasificar(desc):
     d = str(desc).upper()
     if "TRANSFERENCIA" in d and ("JORGE" in d or "BBVA" in d or "ING" in d): return "TRASPASOS", "Movimiento entre cuentas"
-    # 🆕 CORRECCIÓN: NÓMINA GREGO TIENE PRIORIDAD SI APARECE SU NOMBRE
     if "GREGO" in d and any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "SALARIO"]): return "INGRESOS", "Nómina Grego"
     if any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "PENSIÓN", "SALARIO", "GUARDIA CIVIL", "DIRECCION GENERAL DE LA POLICIA"]): return "INGRESOS", "Nómina Jorge"
     if "BIZUM" in d and ("FAVOR" in d or "RECIBIDO" in d): return "INGRESOS", "Ingreso Bizum"
@@ -170,7 +170,6 @@ def limpiar_duplicados_df(df_mov):
             if (df_c['es_real'].astype(int) == 1).any(): res.append(df_c[df_c['es_real'].astype(int) == 1])
             else: res.append(df_c)
                 
-        # 🆕 CORRECCIÓN: INCLUIR "PENDIENTE" EN LA SUMA PARA QUE LOS GASTOS SIN CATEGORIZAR CUENTEN
         for b in BLOQUES_ORDEN + ["PENDIENTE"]:
             df_b = sub_m[(sub_m['bloque'] == b) & (sub_m['tipo'] == 'GASTO')]
             if df_b.empty: continue
@@ -253,7 +252,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v6.10 Cloud")
+st.title("💰 Control Económico Familiar v7.2 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -292,6 +291,38 @@ if nuevo_saldo_ini != saldo_inicial_db:
     st.rerun()
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("🛡️ Copia de Seguridad (Cerebro/Reglas)")
+
+# 📥 EXPORTAR REGLAS (BACKUP)
+df_reglas_actuales = pd.read_sql_query(text("SELECT patron, bloque, concepto, importe_exacto FROM reglas_categorias"), engine)
+json_reglas = df_reglas_actuales.to_json(orient="records", force_ascii=False)
+st.sidebar.download_button(
+    label="💾 Exportar Reglas (Backup)",
+    data=json_reglas,
+    file_name=f"backup_cerebro_reglas_{datetime.now().strftime('%Y%m%d')}.json",
+    mime="application/json",
+    use_container_width=True
+)
+
+# 📤 RESTAURAR REGLAS (RESTORE)
+archivo_backup = st.sidebar.file_uploader("📂 Restaurar Cerebro (JSON):", type=["json"])
+if archivo_backup is not None:
+    if st.sidebar.button("⚠️ Cargar y Sobrescribir Reglas", type="primary", use_container_width=True):
+        try:
+            data_bk = json.load(archivo_backup)
+            with engine.begin() as conn:
+                conn.execute(text("DELETE FROM reglas_categorias"))
+                for r_item in data_bk:
+                    conn.execute(
+                        text("INSERT INTO reglas_categorias (patron, bloque, concepto, importe_exacto) VALUES (:p, :b, :c, :i)"),
+                        {"p": r_item["patron"], "b": r_item["bloque"], "c": r_item["concepto"], "i": r_item["importe_exacto"]}
+                    )
+            st.sidebar.success("¡Cerebro restaurado con éxito!")
+            time.sleep(1.5); st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Error al restaurar: {e}")
+
+st.sidebar.markdown("---")
 st.sidebar.subheader("🛠️ Zona de Limpieza Total")
 
 if st.sidebar.button("🧹 Borrar Reglas de IA Manuales"):
@@ -307,7 +338,7 @@ if st.sidebar.button(f"🧨 Borrar Banco SOLO de {mes_actual_str} {anio_sel}"):
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM movimientos WHERE es_real = 1 AND anio = :anio AND mes = :mes"), {"anio": int(anio_sel), "mes": str(mes_actual_str)})
         conn.execute(text("DELETE FROM meses_cerrados WHERE anio = :anio AND mes = :mes"), {"anio": int(anio_sel), "mes": str(mes_actual_str)})
-    st.sidebar.success(f"¡Movimientos reales de {mes_actual_str} {anio_sel} borrados! El resto del año y tus reglas están a salvo.")
+    st.sidebar.success(f"¡Movimientos reales de {mes_actual_str} {anio_sel} borrados!")
     time.sleep(1.5); st.rerun()
     
 if st.sidebar.button("🔁 Restaurar Presupuesto Base"):
@@ -564,7 +595,6 @@ elif st.session_state.vista_nivel == 'MENSUAL':
     tag_estado = '🟢 MES CONSOLIDADO' if es_cerrado else '🟠 PREVISIÓN FUTURA'
     nombre_mes = MESES_NOMBRES.get(st.session_state.mes_seleccionado, st.session_state.mes_seleccionado).upper()
     
-    # 🆕 CABECERA FLOTANTE (STICKY HEADER) - DISEÑO INFALIBLE 
     st.markdown(f'''
         <div style="
             position: fixed; top: 40px; left: 50%; transform: translateX(-50%); z-index: 999999;
@@ -726,7 +756,6 @@ elif st.session_state.vista_nivel == 'MENSUAL':
             df_mostrar = df_mostrar.sort_values(by='fecha_exacta', ascending=False)
             
             with st.expander(f"{tag} | **{concepto}** | {total_concepto:,.2f} € | *({num_movs} movimientos)*"):
-                # 🆕 MINI-FORMULARIO INTELIGENTE (Sin recargas molestas al cambiar importe)
                 if not has_real and len(df_c) == 1:
                     r_prev_item = df_c.iloc[0]
                     with st.form(f"f_p_ing_{r_prev_item['id']}"):
