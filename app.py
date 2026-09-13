@@ -48,7 +48,7 @@ def get_db_engine():
         db_url = st.secrets["postgres"]["url"]
     else:
         db_url = os.environ.get("DATABASE_URL", "sqlite:///economia_familiar.db")
-    
+        
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
         
@@ -60,7 +60,7 @@ is_postgres = "postgresql" in str(engine.url)
 def auto_clasificar(desc):
     d = str(desc).upper()
     
-    # 🛡️ BLINDAJE ABSOLUTO 1: Si es de Grego, JAMÁS puede ser de Jorge
+    # 🛡️ BLINDAJE ABSOLUTO 1: Si es de Grego (o variaciones de texto como GREGORIA, MARCHAL), JAMÁS puede ser de Jorge
     if any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]):
         return "INGRESOS", "Nómina Grego"
         
@@ -208,7 +208,7 @@ def limpiar_duplicados_df(df_mov):
             df_c = df_tras[df_tras['concepto'] == c]
             if (df_c['es_real'].astype(int) == 1).any(): res.append(df_c[df_c['es_real'].astype(int) == 1])
             else: res.append(df_c)
-                    
+                
     if not res: return df_mov.iloc[0:0]
     return pd.concat(res)
 
@@ -686,29 +686,29 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                 bloque_val, concepto_limpio = "PENDIENTE", desc_orig
                                 matched = False
                                 
-                                # 🛡️ ORDEN DE CLASIFICACIÓN SEGURO Y ROBUSTO
-                                # 1. Buscar primero en reglas guardadas
-                                for _, r_rule in reglas_df.iterrows():
-                                    patron_ok = str(r_rule['patron']).upper() in desc_orig.upper()
-                                    imp_rule = float(r_rule['importe_exacto'] or 0.0)
-                                    imp_ok = True if imp_rule == 0.0 else (abs(imp_rule - imp_abs) < 0.01)
-                                    if patron_ok and imp_ok:
-                                        bloque_val, concepto_limpio = r_rule['bloque'], r_rule['concepto']
-                                        if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
-                                        matched = True; break
+                                # 🛡️ ORDEN DE CLASIFICACIÓN SEGURO Y ROBUSTO (INTELIGENCIA PRIMERO)
+                                # 1. Evaluar primero el auto_clasificar inteligente para evitar que reglas obsoletas pisen las nóminas
+                                b_ia, c_ia = auto_clasificar(desc_orig)
+                                if b_ia and c_ia:
+                                    bloque_val, concepto_limpio = b_ia, c_ia
+                                    if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
+                                    matched = True
                                 
-                                # 2. Si no hay regla, usar la inteligencia base (auto_clasificar con blindaje Grego/Jorge)
+                                # 2. Si la inteligencia no determinó nada, buscar en reglas guardadas del usuario
                                 if not matched:
-                                    b_ia, c_ia = auto_clasificar(desc_orig)
-                                    if b_ia and c_ia:
-                                        bloque_val, concepto_limpio = b_ia, c_ia
-                                        if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
-                                        matched = True
+                                    for _, r_rule in reglas_df.iterrows():
+                                        patron_ok = str(r_rule['patron']).upper() in desc_orig.upper()
+                                        imp_rule = float(r_rule['importe_exacto'] or 0.0)
+                                        imp_ok = True if imp_rule == 0.0 else (abs(imp_rule - imp_abs) < 0.01)
+                                        if patron_ok and imp_ok:
+                                            bloque_val, concepto_limpio = r_rule['bloque'], r_rule['concepto']
+                                            if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
+                                            matched = True; break
 
                                 if tipo_val == "INGRESO" and not matched: bloque_val = "INGRESOS"
-                                        
+                                    
                                 registros.append({"anio": int(a_dest), "mes": str(m_dest), "bloque": bloque_val, "concepto": concepto_limpio, "tipo": tipo_val, "importe": imp_abs, "es_real": 1, "fecha_exacta": f_str, "descripcion_original": desc_orig})
-                                
+                                    
                     if registros:
                         with engine.begin() as conn:
                             conn.execute(text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:anio, :mes, :bloque, :concepto, :tipo, :importe, :es_real, :fecha_exacta, :descripcion_original)"), registros)
