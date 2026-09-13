@@ -8,8 +8,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v7.8 - Corrección Crítica: Blindaje de Nómina Jorge frente a Traspasos
-st.set_page_config(page_title="Control Económico Familiar v7.8 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.9 - Doble Cuenta Independiente (Operativa + Ahorro) con Extractos Bancarios y Traspasos Cruzados
+st.set_page_config(page_title="Control Económico Familiar v7.9 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -64,12 +64,12 @@ def auto_clasificar(desc):
     if any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]):
         return "INGRESOS", "Nómina Grego"
         
-    # 🛡️ BLINDAJE ABSOLUTO 2: Nómina de Jorge (Movido ARRIBA para que "TRANSFERENCIA" no lo pise)
+    # 🛡️ BLINDAJE ABSOLUTO 2: Nómina de Jorge
     if any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "PENSIÓN", "SALARIO", "GUARDIA CIVIL", "DIRECCION GENERAL DE LA POLICIA"]) and not any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]): 
         return "INGRESOS", "Nómina Jorge"
         
-    # 🔄 Traspasos internos (Evaluado DESPUÉS de las nóminas)
-    if "TRANSFERENCIA" in d and ("JORGE" in d or "BBVA" in d or "ING" in d): 
+    # 🔄 Traspasos internos cruzados
+    if "TRANSFERENCIA" in d and ("JORGE" in d or "GREGORIA" in d or "GREGO" in d or "BBVA" in d or "ING" in d or "AHORRO" in d): 
         return "TRASPASOS", "Movimiento entre cuentas"
         
     if "BIZUM" in d and ("FAVOR" in d or "RECIBIDO" in d): return "INGRESOS", "Ingreso Bizum"
@@ -131,34 +131,44 @@ def restaurar_presupuesto_base():
         for anio in range(2026, 2036):
             for mes in MESES_ORDEN:
                 imp_jorge = 4100.0 if mes == "Ene" else 3020.0
-                registros.append({"anio": anio, "mes": mes, "bloque": "INGRESOS", "concepto": "Nómina Jorge", "tipo": "INGRESO", "importe": imp_jorge, "es_real": 0, "fecha_exacta": None, "descripcion_original": "Nómina Jorge"})
-                registros.append({"anio": anio, "mes": mes, "bloque": "INGRESOS", "concepto": "Nómina Grego", "tipo": "INGRESO", "importe": 1500.0, "es_real": 0, "fecha_exacta": None, "descripcion_original": "Nómina Grego"})
+                registros.append({"anio": anio, "mes": mes, "bloque": "INGRESOS", "concepto": "Nómina Jorge", "tipo": "INGRESO", "importe": imp_jorge, "es_real": 0, "fecha_exacta": None, "descripcion_original": "Nómina Jorge", "cuenta": "operativa"})
+                registros.append({"anio": anio, "mes": mes, "bloque": "INGRESOS", "concepto": "Nómina Grego", "tipo": "INGRESO", "importe": 1500.0, "es_real": 0, "fecha_exacta": None, "descripcion_original": "Nómina Grego", "cuenta": "operativa"})
                 for b, c, imp in base_mensual:
-                    registros.append({"anio": anio, "mes": mes, "bloque": b, "concepto": c, "tipo": "GASTO", "importe": imp, "es_real": 0, "fecha_exacta": None, "descripcion_original": c})
+                    registros.append({"anio": anio, "mes": mes, "bloque": b, "concepto": c, "tipo": "GASTO", "importe": imp, "es_real": 0, "fecha_exacta": None, "descripcion_original": c, "cuenta": "operativa"})
             for b, c, imp, mes in base_especial:
-                registros.append({"anio": anio, "mes": mes, "bloque": b, "concepto": c, "tipo": "GASTO", "importe": imp, "es_real": 0, "fecha_exacta": None, "descripcion_original": c})
+                registros.append({"anio": anio, "mes": mes, "bloque": b, "concepto": c, "tipo": "GASTO", "importe": imp, "es_real": 0, "fecha_exacta": None, "descripcion_original": c, "cuenta": "operativa"})
             
         conn.execute(
-            text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:anio, :mes, :bloque, :concepto, :tipo, :importe, :es_real, :fecha_exacta, :descripcion_original)"),
+            text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original, cuenta) VALUES (:anio, :mes, :bloque, :concepto, :tipo, :importe, :es_real, :fecha_exacta, :descripcion_original, :cuenta)"),
             registros
         )
 
 def init_db():
     with engine.begin() as conn:
         if is_postgres:
-            conn.execute(text('''CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, partida_recurrente_id INTEGER, anio INTEGER NOT NULL, mes VARCHAR(10) NOT NULL, bloque VARCHAR(50) NOT NULL, concepto VARCHAR(100) NOT NULL, tipo VARCHAR(20) NOT NULL, importe NUMERIC(10,2) NOT NULL, es_real INTEGER DEFAULT 0, fecha_exacta VARCHAR(20), descripcion_original TEXT)'''))
-            conn.execute(text('''CREATE TABLE IF NOT EXISTS meses_cerrados (anio INTEGER NOT NULL, mes VARCHAR(10) NOT NULL, PRIMARY KEY (anio, mes))'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, partida_recurrente_id INTEGER, anio INTEGER NOT NULL, mes VARCHAR(10) NOT NULL, bloque VARCHAR(50) NOT NULL, concepto VARCHAR(100) NOT NULL, tipo VARCHAR(20) NOT NULL, importe NUMERIC(10,2) NOT NULL, es_real INTEGER DEFAULT 0, fecha_exacta VARCHAR(20), descripcion_original TEXT, cuenta VARCHAR(20) DEFAULT 'operativa')'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS meses_cerrados (anio INTEGER NOT NULL, mes VARCHAR(10) NOT NULL, cuenta VARCHAR(20) DEFAULT 'operativa', PRIMARY KEY (anio, mes, cuenta))'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS desgloses (id SERIAL PRIMARY KEY, movimiento_id INTEGER NOT NULL, subconcepto VARCHAR(100) NOT NULL, importe NUMERIC(10,2) NOT NULL, fecha VARCHAR(20))'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS retiros_ahorro (id SERIAL PRIMARY KEY, anio INTEGER NOT NULL, mes VARCHAR(10) NOT NULL, concepto VARCHAR(100) NOT NULL, importe NUMERIC(10,2) NOT NULL, fecha VARCHAR(20))'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS reglas_categorias (id SERIAL PRIMARY KEY, patron VARCHAR(100) NOT NULL, bloque VARCHAR(50) NOT NULL, concepto VARCHAR(100) NOT NULL, importe_exacto NUMERIC(10,2) DEFAULT 0.0)'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS configuracion (clave VARCHAR(50) PRIMARY KEY, valor NUMERIC(10,2) NOT NULL)'''))
         else:
-            conn.execute(text('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, partida_recurrente_id INTEGER, anio INTEGER NOT NULL, mes TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, tipo TEXT NOT NULL, importe REAL NOT NULL, es_real INTEGER DEFAULT 0, fecha_exacta TEXT, descripcion_original TEXT)'''))
-            conn.execute(text('''CREATE TABLE IF NOT EXISTS meses_cerrados (anio INTEGER NOT NULL, mes TEXT NOT NULL, PRIMARY KEY (anio, mes))'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, partida_recurrente_id INTEGER, anio INTEGER NOT NULL, mes TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, tipo TEXT NOT NULL, importe REAL NOT NULL, es_real INTEGER DEFAULT 0, fecha_exacta TEXT, descripcion_original TEXT, cuenta TEXT DEFAULT 'operativa')'''))
+            conn.execute(text('''CREATE TABLE IF NOT EXISTS meses_cerrados (anio INTEGER NOT NULL, mes TEXT NOT NULL, cuenta TEXT DEFAULT 'operativa', PRIMARY KEY (anio, mes, cuenta))'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS desgloses (id INTEGER PRIMARY KEY AUTOINCREMENT, movimiento_id INTEGER NOT NULL, subconcepto TEXT NOT NULL, importe REAL NOT NULL, fecha TEXT)'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS retiros_ahorro (id INTEGER PRIMARY KEY AUTOINCREMENT, anio INTEGER NOT NULL, mes TEXT NOT NULL, concepto TEXT NOT NULL, importe REAL NOT NULL, fecha TEXT)'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS reglas_categorias (id INTEGER PRIMARY KEY AUTOINCREMENT, patron TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, importe_exacto REAL DEFAULT 0.0)'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS configuracion (clave VARCHAR(50) PRIMARY KEY, valor REAL NOT NULL)'''))
+
+        # Migración silenciosa por si la tabla ya existía sin la columna 'cuenta'
+        try:
+            conn.execute(text("ALTER TABLE movimientos ADD COLUMN IF NOT EXISTS cuenta VARCHAR(20) DEFAULT 'operativa'"))
+        except:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE meses_cerrados ADD COLUMN IF NOT EXISTS cuenta VARCHAR(20) DEFAULT 'operativa'"))
+        except:
+            pass
 
         try:
             conn.execute(text("DELETE FROM reglas_categorias WHERE UPPER(patron) LIKE '%GREGO%' OR UPPER(patron) LIKE '%MARCHAL%'"))
@@ -176,45 +186,47 @@ def init_db():
 def limpiar_duplicados_df(df_mov):
     if df_mov.empty: return df_mov
     res = []
-    for m in df_mov['mes'].unique():
-        sub_m = df_mov[df_mov['mes'] == m]
-        
-        df_ing = sub_m[sub_m['tipo'] == 'INGRESO']
-        for c in df_ing['concepto'].unique():
-            df_c = df_ing[df_ing['concepto'] == c]
-            if (df_c['es_real'].astype(int) == 1).any(): 
-                res.append(df_c[df_c['es_real'].astype(int) == 1])
-            else: 
-                res.append(df_c)
-                
-        for b in BLOQUES_ORDEN + ["PENDIENTE"]:
-            df_b = sub_m[(sub_m['bloque'] == b) & (sub_m['tipo'] == 'GASTO')]
-            if df_b.empty: continue
+    for cta in df_mov['cuenta'].unique() if 'cuenta' in df_mov.columns else ['operativa']:
+        sub_cta = df_mov[df_mov['cuenta'] == cta] if 'cuenta' in df_mov.columns else df_mov
+        for m in sub_cta['mes'].unique():
+            sub_m = sub_cta[sub_cta['mes'] == m]
             
-            if b == "PENDIENTE":
-                res.append(df_b)
-                continue
-                
-            if b == "COMIDA":
-                if (df_b['es_real'].astype(int) == 1).any(): res.append(df_b[df_b['es_real'].astype(int) == 1])
-                else: res.append(df_b)
-            else:
-                for c in df_b['concepto'].unique():
-                    df_c = df_b[df_b['concepto'] == c]
-                    if (df_c['es_real'].astype(int) == 1).any(): res.append(df_c[df_c['es_real'].astype(int) == 1])
-                    else: res.append(df_c)
+            df_ing = sub_m[sub_m['tipo'] == 'INGRESO']
+            for c in df_ing['concepto'].unique():
+                df_c = df_ing[df_ing['concepto'] == c]
+                if (df_c['es_real'].astype(int) == 1).any(): 
+                    res.append(df_c[df_c['es_real'].astype(int) == 1])
+                else: 
+                    res.append(df_c)
                     
-        df_tras = sub_m[sub_m['tipo'] == 'TRASPASO']
-        for c in df_tras['concepto'].unique():
-            df_c = df_tras[df_tras['concepto'] == c]
-            if (df_c['es_real'].astype(int) == 1).any(): res.append(df_c[df_c['es_real'].astype(int) == 1])
-            else: res.append(df_c)
+            for b in BLOQUES_ORDEN + ["PENDIENTE"]:
+                df_b = sub_m[(sub_m['bloque'] == b) & (sub_m['tipo'] == 'GASTO')]
+                if df_b.empty: continue
+                
+                if b == "PENDIENTE":
+                    res.append(df_b)
+                    continue
+                    
+                if b == "COMIDA":
+                    if (df_b['es_real'].astype(int) == 1).any(): res.append(df_b[df_b['es_real'].astype(int) == 1])
+                    else: res.append(df_b)
+                else:
+                    for c in df_b['concepto'].unique():
+                        df_c = df_b[df_b['concepto'] == c]
+                        if (df_c['es_real'].astype(int) == 1).any(): res.append(df_c[df_c['es_real'].astype(int) == 1])
+                        else: res.append(df_c)
+                        
+            df_tras = sub_m[sub_m['tipo'] == 'TRASPASO']
+            for c in df_tras['concepto'].unique():
+                df_c = df_tras[df_tras['concepto'] == c]
+                if (df_c['es_real'].astype(int) == 1).any(): res.append(df_c[df_c['es_real'].astype(int) == 1])
+                else: res.append(df_c)
                 
     if not res: return df_mov.iloc[0:0]
     return pd.concat(res)
 
 def obtener_metricas_ahorro_completa(anio, saldo_inicial):
-    df_m = pd.read_sql_query(text("SELECT anio, mes, bloque, concepto, tipo, importe, es_real FROM movimientos WHERE anio <= :anio"), engine, params={"anio": anio})
+    df_m = pd.read_sql_query(text("SELECT anio, mes, bloque, concepto, tipo, importe, es_real, cuenta FROM movimientos WHERE anio <= :anio"), engine, params={"anio": anio})
     df_r = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio <= :anio"), engine, params={"anio": anio})
     
     df_m_limpio = limpiar_duplicados_df(df_m)
@@ -224,21 +236,28 @@ def obtener_metricas_ahorro_completa(anio, saldo_inicial):
     
     for a in range(2026, anio + 1):
         for m in MESES_ORDEN:
-            sub_m = df_m_limpio[(df_m_limpio['anio'] == a) & (df_m_limpio['mes'] == m)]
-            ing = sub_m[sub_m['tipo'] == 'INGRESO']['importe'].sum()
-            gas = sub_m[sub_m['tipo'] == 'GASTO']['importe'].sum()
+            # Cuenta operativa (sobrante mensual)
+            sub_op = df_m_limpio[(df_m_limpio['anio'] == a) & (df_m_limpio['mes'] == m) & (df_m_limpio['cuenta'] == 'operativa')]
+            ing_op = sub_op[sub_op['tipo'] == 'INGRESO']['importe'].sum()
+            gas_op = sub_op[sub_op['tipo'] == 'GASTO']['importe'].sum()
+            sobrante = ing_op - gas_op
+            
+            # Cuenta ahorro (extracto propio de ahorro + retiros de hucha manuales)
+            sub_ah = df_m_limpio[(df_m_limpio['anio'] == a) & (df_m_limpio['mes'] == m) & (df_m_limpio['cuenta'] == 'ahorro')]
+            ing_ah = sub_ah[sub_ah['tipo'] == 'INGRESO']['importe'].sum()
+            gas_ah = sub_ah[sub_ah['tipo'] == 'GASTO']['importe'].sum()
             
             sub_r = df_r[(df_r['anio'] == a) & (df_r['mes'] == m)]
             ret_mes = sub_r['importe'].sum() if not sub_r.empty else 0.0
             
-            sobrante = ing - gas
-            saldo_acum += (sobrante + ret_mes)
+            neto_mes_ahorro = (sobrante + (ing_ah - gas_ah) + ret_mes)
+            saldo_acum += neto_mes_ahorro
                 
             if a == anio:
                 data_meses.append({
                     "Mes": m,
                     "Ahorro Generado (Sobrante)": sobrante,
-                    "Movimientos Hucha (+/-)": ret_mes,
+                    "Movimientos Hucha (+/-)": (ing_ah - gas_ah) + ret_mes,
                     "Saldo Acumulado Hucha": saldo_acum
                 })
                 
@@ -269,11 +288,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v7.8 Cloud")
+st.title("💰 Control Económico Familiar v7.9 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
 if 'mes_seleccionado' not in st.session_state: st.session_state.mes_seleccionado = 'Ene'
+if 'cuenta_seleccionada' not in st.session_state: st.session_state.cuenta_seleccionada = 'operativa'
 if 'detalle_concepto' not in st.session_state: st.session_state.detalle_concepto = None
 if 'detalle_bloque' not in st.session_state: st.session_state.detalle_bloque = None
 if 'enseñar_id' not in st.session_state: st.session_state.enseñar_id = None
@@ -283,7 +303,7 @@ if 'enseñar_id' not in st.session_state: st.session_state.enseñar_id = None
 # ==========================================
 st.sidebar.header("🕹️ Panel de Navegación")
 
-meses_cerrados_df = pd.read_sql_query(text("SELECT anio, mes FROM meses_cerrados"), engine)
+meses_cerrados_df = pd.read_sql_query(text("SELECT anio, mes, cuenta FROM meses_cerrados"), engine)
 saldo_inicial_db = pd.read_sql_query(text("SELECT valor FROM configuracion WHERE clave = 'saldo_inicial_sep_2026'"), engine).iloc[0]['valor']
 
 anio_sel = st.sidebar.selectbox("Seleccionar Año:", list(range(2026, 2036)), index=0)
@@ -349,11 +369,12 @@ if st.sidebar.button("🧹 Borrar Reglas de IA Manuales"):
     time.sleep(1.5); st.rerun()
 
 mes_actual_str = st.session_state.mes_seleccionado
-if st.sidebar.button(f"🧨 Borrar Banco SOLO de {mes_actual_str} {anio_sel}"):
+cuenta_actual_str = st.session_state.get('cuenta_seleccionada', 'operativa')
+if st.sidebar.button(f"🧨 Borrar Banco SOLO de {mes_actual_str} {anio_sel} ({cuenta_actual_str.upper()})"):
     with engine.begin() as conn:
-        conn.execute(text("DELETE FROM movimientos WHERE es_real = 1 AND anio = :anio AND mes = :mes"), {"anio": int(anio_sel), "mes": str(mes_actual_str)})
-        conn.execute(text("DELETE FROM meses_cerrados WHERE anio = :anio AND mes = :mes"), {"anio": int(anio_sel), "mes": str(mes_actual_str)})
-    st.sidebar.success(f"¡Movimientos reales de {mes_actual_str} {anio_sel} borrados!")
+        conn.execute(text("DELETE FROM movimientos WHERE es_real = 1 AND anio = :anio AND mes = :mes AND cuenta = :cta"), {"anio": int(anio_sel), "mes": str(mes_actual_str), "cta": str(cuenta_actual_str)})
+        conn.execute(text("DELETE FROM meses_cerrados WHERE anio = :anio AND mes = :mes AND cuenta = :cta"), {"anio": int(anio_sel), "mes": str(mes_actual_str), "cta": str(cuenta_actual_str)})
+    st.sidebar.success(f"¡Movimientos reales de {mes_actual_str} {anio_sel} ({cuenta_actual_str}) borrados!")
     time.sleep(1.5); st.rerun()
     
 if st.sidebar.button("🔁 Restaurar Presupuesto Base"):
@@ -475,8 +496,8 @@ elif st.session_state.vista_nivel == 'ANUAL':
                     conn.execute(text("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (:a, :m, :c, :i, :f)"), {"a": int(anio_sel), "m": str(m_ret_anual), "c": str(c_ahorro_an), "i": imp_final, "f": str(f_ahorro_an)})
                     if imp_final < 0:
                         conn.execute(
-                            text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:a, :m, :b, :c, :t, :i, :er, :f, :d)"),
-                            {"a": int(anio_sel), "m": str(m_ret_anual), "b": "INGRESOS", "c": "Traspaso desde Ahorro", "t": "INGRESO", "i": abs(imp_final), "er": 1, "f": str(f_ahorro_an), "d": f"Traspaso automático ({c_ahorro_an})"}
+                            text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original, cuenta) VALUES (:a, :m, :b, :c, :t, :i, :er, :f, :d, :cta)"),
+                            {"a": int(anio_sel), "m": str(m_ret_anual), "b": "INGRESOS", "c": "Traspaso desde Ahorro", "t": "INGRESO", "i": abs(imp_final), "er": 1, "f": str(f_ahorro_an), "d": f"Traspaso automático ({c_ahorro_an})", "cta": "operativa"}
                         )
                 st.success(f"Movimiento registrado en la Hucha ({m_ret_anual} {anio_sel}) e ingreso generado con éxito.")
                 time.sleep(1.5); st.rerun()
@@ -501,7 +522,7 @@ elif st.session_state.vista_nivel == 'ANUAL':
     
     st.markdown(f"### 📊 Resumen Cuenta Operativa – {anio_sel}")
     
-    df_mov = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :anio"), engine, params={"anio": anio_sel})
+    df_mov = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :anio AND cuenta = 'operativa'"), engine, params={"anio": anio_sel})
     df_mov_limpio = limpiar_duplicados_df(df_mov)
     
     ing_tot = df_mov_limpio[df_mov_limpio['tipo'] == 'INGRESO']['importe'].sum()
@@ -604,33 +625,28 @@ elif st.session_state.vista_nivel == 'MENSUAL':
             st.session_state.mes_seleccionado = m_nav
             st.rerun()
             
-    es_cerrado = not pd.read_sql_query(text("SELECT 1 FROM meses_cerrados WHERE anio = :a AND mes = :m"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado)}).empty
+    st.markdown("---")
+    
+    # 🎛️ SELECTOR DE CUENTA ACTIVA EN EL MES
+    col_sel_cta, col_info_cta = st.columns([2, 4])
+    cuenta_opcion = col_sel_cta.radio("🏦 Seleccionar Cuenta Activa para este Mes:", ["🟢 Cuenta Operativa (Gastos)", "🐷 Cuenta de Ahorro (Hucha)"], horizontal=True, key="radio_cuenta_activa")
+    st.session_state.cuenta_seleccionada = 'operativa' if "Operativa" in cuenta_opcion else 'ahorro'
+    
+    es_cerrado = not pd.read_sql_query(text("SELECT 1 FROM meses_cerrados WHERE anio = :a AND mes = :m AND cuenta = :c"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "c": str(st.session_state.cuenta_seleccionada)}).empty
     reglas_df = pd.read_sql_query(text("SELECT patron, bloque, concepto, COALESCE(importe_exacto, 0.0) as importe_exacto FROM reglas_categorias"), engine)
     
     tag_estado = '🟢 MES CONSOLIDADO' if es_cerrado else '🟠 PREVISIÓN FUTURA'
     nombre_mes = MESES_NOMBRES.get(st.session_state.mes_seleccionado, st.session_state.mes_seleccionado).upper()
-    
-    st.markdown(f'''
-        <div style="
-            position: fixed; top: 40px; left: 50%; transform: translateX(-50%); z-index: 999999;
-            background: linear-gradient(90deg, #1E293B, #0F172A); color: #FFFFFF;
-            padding: 10px 25px; border-radius: 0 0 15px 15px; font-size: 16px; font-weight: bold;
-            box-shadow: 0px 5px 15px rgba(0,0,0,0.5); border: 2px solid #3B82F6; border-top: none;
-            display: flex; gap: 15px; align-items: center;
-        ">
-            <span>📅 VISTA: {nombre_mes} {anio_sel}</span>
-            <span style="background: rgba(255,255,255,0.15); padding: 3px 10px; border-radius: 5px; font-size: 14px;">{tag_estado}</span>
-        </div>
-    ''', unsafe_allow_html=True)
+    nombre_cuenta_txt = "CUENTA OPERATIVA" if st.session_state.cuenta_seleccionada == 'operativa' else "CUENTA DE AHORRO"
     
     col_back, col_bank = st.columns([2, 3])
     if col_back.button("⬅️ Volver a Vista Anual", type="primary"):
         st.session_state.vista_nivel = 'ANUAL'
         st.rerun()
         
-    with col_bank.expander("📥 Importar Extracto Bancario", expanded=False):
-        modo_importacion = st.radio("¿Cómo quieres procesar las fechas de este Excel?", [f"1️⃣ Modo Ciclo de Nómina (Forzar todos al mes: {st.session_state.mes_seleccionado})", "2️⃣ Modo Calendario (Repartir según fecha)"])
-        uploaded_bank = st.file_uploader("Subir Excel/CSV:", type=["xlsx", "xls", "csv"])
+    with col_bank.expander(f"📥 Importar Extracto Bancario ({nombre_cuenta_txt})", expanded=False):
+        modo_importacion = st.radio("¿Cómo quieres procesar las fechas de este Excel?", [f"1️⃣ Modo Ciclo de Nómina (Forzar todos al mes: {st.session_state.mes_seleccionado})", "2️⃣ Modo Calendario (Repartir según fecha)"], key="modo_imp_cta")
+        uploaded_bank = st.file_uploader("Subir Excel/CSV:", type=["xlsx", "xls", "csv"], key=f"up_bank_{st.session_state.cuenta_seleccionada}")
         if uploaded_bank:
             try:
                 if uploaded_bank.name.endswith(".csv"): df_banco = pd.read_csv(uploaded_bank)
@@ -647,8 +663,8 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                 col_imp = next((c for c in cols_lower if 'importe' in c or 'cantidad' in c), None)
                 col_fec = next((c for c in cols_lower if 'fecha' in c or 'f. valor' in c or 'f.valor' in c), None)
 
-                if st.button("🚀 Importar y Conciliar", type="primary") and col_imp and col_desc and col_fec:
-                    movs_existentes = pd.read_sql_query(text("SELECT anio, mes, fecha_exacta, importe, descripcion_original FROM movimientos WHERE es_real = 1"), engine)
+                if st.button("🚀 Importar y Conciliar en esta Cuenta", type="primary") and col_imp and col_desc and col_fec:
+                    movs_existentes = pd.read_sql_query(text("SELECT anio, mes, fecha_exacta, importe, descripcion_original, cuenta FROM movimientos WHERE es_real = 1 AND cuenta = :cta"), engine, params={"cta": str(st.session_state.cuenta_seleccionada)})
                     registros = []
                     for _, b_row in df_banco.iterrows():
                         desc_orig = str(b_row[col_desc]) if pd.notna(b_row[col_desc]) else "Gasto"
@@ -687,15 +703,13 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                 bloque_val, concepto_limpio = "PENDIENTE", desc_orig
                                 matched = False
                                 
-                                # 🛡️ ORDEN DE CLASIFICACIÓN SEGURO Y ROBUSTO (INTELIGENCIA PRIMERO)
-                                # 1. Evaluar primero el auto_clasificar inteligente para evitar que reglas obsoletas pisen las nóminas
+                                # 🛡️ ORDEN DE CLASIFICACIÓN (INTELIGENCIA PRIMERO)
                                 b_ia, c_ia = auto_clasificar(desc_orig)
                                 if b_ia and c_ia:
                                     bloque_val, concepto_limpio = b_ia, c_ia
                                     if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
                                     matched = True
                                 
-                                # 2. Si la inteligencia no determinó nada, buscar en reglas guardadas del usuario
                                 if not matched:
                                     for _, r_rule in reglas_df.iterrows():
                                         patron_ok = str(r_rule['patron']).upper() in desc_orig.upper()
@@ -708,18 +722,18 @@ elif st.session_state.vista_nivel == 'MENSUAL':
 
                                 if tipo_val == "INGRESO" and not matched: bloque_val = "INGRESOS"
                                     
-                                registros.append({"anio": int(a_dest), "mes": str(m_dest), "bloque": bloque_val, "concepto": concepto_limpio, "tipo": tipo_val, "importe": imp_abs, "es_real": 1, "fecha_exacta": f_str, "descripcion_original": desc_orig})
+                                registros.append({"anio": int(a_dest), "mes": str(m_dest), "bloque": bloque_val, "concepto": concepto_limpio, "tipo": tipo_val, "importe": imp_abs, "es_real": 1, "fecha_exacta": f_str, "descripcion_original": desc_orig, "cuenta": str(st.session_state.cuenta_seleccionada)})
                                     
                     if registros:
                         with engine.begin() as conn:
-                            conn.execute(text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:anio, :mes, :bloque, :concepto, :tipo, :importe, :es_real, :fecha_exacta, :descripcion_original)"), registros)
-                            conn.execute(text("INSERT INTO meses_cerrados (anio, mes) VALUES (:anio, :mes) ON CONFLICT (anio, mes) DO NOTHING"), {"anio": int(anio_sel), "mes": str(st.session_state.mes_seleccionado)})
-                        st.success(f"¡{len(registros)} registros guardados en {st.session_state.mes_seleccionado}!")
+                            conn.execute(text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original, cuenta) VALUES (:anio, :mes, :bloque, :concepto, :tipo, :importe, :es_real, :fecha_exacta, :descripcion_original, :cuenta)"), registros)
+                            conn.execute(text("INSERT INTO meses_cerrados (anio, mes, cuenta) VALUES (:anio, :mes, :cta) ON CONFLICT (anio, mes, cuenta) DO NOTHING"), {"anio": int(anio_sel), "mes": str(st.session_state.mes_seleccionado), "cta": str(st.session_state.cuenta_seleccionada)})
+                        st.success(f"¡{len(registros)} registros guardados en {st.session_state.mes_seleccionado} ({nombre_cuenta_txt})!")
                     else: st.warning("No se importó nada. Todo estaba duplicado.")
                     time.sleep(2); st.rerun()
             except Exception as e: st.error(str(e))
                 
-    df_mes = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado)})
+    df_mes = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m AND cuenta = :cta"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "cta": str(st.session_state.cuenta_seleccionada)})
     df_retiros_mes = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio = :a AND mes = :m"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado)})
     
     df_mes_limpio = limpiar_duplicados_df(df_mes)
@@ -732,37 +746,38 @@ elif st.session_state.vista_nivel == 'MENSUAL':
     saldo_mes_hucha = df_ahorro_a[df_ahorro_a['Mes'] == st.session_state.mes_seleccionado]['Saldo Acumulado Hucha'].values[0]
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Ingresos Mes", f"{ing_m:,.2f} €")
+    c1.metric(f"Ingresos Mes ({nombre_cuenta_txt})", f"{ing_m:,.2f} €")
     c2.metric("Gastos Mes (Incluye Pendientes)", f"{gas_m:,.2f} €")
-    c3.metric("Sobrante Operativo", f"{sobrante_mes:,.2f} €")
-    c4.metric("🐷 Saldo Cuenta Ahorro", f"{saldo_mes_hucha:,.2f} €")
+    c3.metric("Sobrante / Balance", f"{sobrante_mes:,.2f} €")
+    c4.metric("🐷 Saldo Global Cuenta Ahorro", f"{saldo_mes_hucha:,.2f} €")
     
     st.markdown("---")
     
-    st.markdown('<div class="block-header-ahorro">🐷 EXTRACCIONES Y GASTOS EXTRAORDINARIOS DE LA CUENTA DE AHORRO</div>', unsafe_allow_html=True)
-    if not df_retiros_mes.empty:
-        for _, r in df_retiros_mes.iterrows():
-            f_r_str = r['fecha'] if ('fecha' in r and pd.notna(r['fecha']) and str(r['fecha']) != "None") else "Sin fecha"
-            signo_str = "💸 Retiro" if r['importe'] < 0 or "Retiro" in str(r.get('concepto', '')) else "🟢 Aportación"
-            ca1, ca2, ca3, ca4 = st.columns([2, 5, 2, 1])
-            ca1.write(f"📅 **{f_r_str}**"); ca2.write(f"Motivo: **{r['concepto']}**"); ca3.write(f"{signo_str}: **{abs(r['importe']):,.2f} €**")
-            if ca4.button("❌", key=f"del_ahorro_{r['id']}"):
-                with engine.begin() as conn:
-                    conn.execute(text("DELETE FROM retiros_ahorro WHERE id = :id"), {"id": int(r['id'])})
-                st.rerun()
-                
-    with st.expander("🔻 Registrar un Retiro o Gasto Extraordinario de la Hucha"):
-        st.info(f"💡 **Saldo disponible actualmente en la Hucha ({st.session_state.mes_seleccionado} {anio_sel}): {saldo_mes_hucha:,.2f} €**")
-        with st.form("form_ahorro"):
-            c_ahorro = st.text_input("Motivo del retiro (Ej: Reparación coche, Mueble):")
-            i_ahorro = st.number_input("Importe a retirar (€):", min_value=0.0)
-            f_ahorro = st.date_input("Fecha del gasto extraordinario:")
-            if st.form_submit_button("Guardar Retiro") and c_ahorro and i_ahorro > 0:
-                with engine.begin() as conn:
-                    conn.execute(text("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (:a, :m, :c, :i, :f)"), {"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "c": str(c_ahorro), "i": -float(i_ahorro), "f": str(f_ahorro)})
-                    conn.execute(text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original) VALUES (:a, :m, :b, :c, :t, :i, :er, :f, :d)"), {"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "b": "INGRESOS", "c": "Traspaso desde Ahorro", "t": "INGRESO", "i": float(i_ahorro), "er": 1, "f": str(f_ahorro), "d": f"Traspaso automático ({c_ahorro})"})
-                st.rerun()
-    st.markdown("---")
+    if st.session_state.cuenta_seleccionada == 'ahorro':
+        st.markdown('<div class="block-header-ahorro">🐷 EXTRACCIONES Y GASTOS EXTRAORDINARIOS DE LA CUENTA DE AHORRO</div>', unsafe_allow_html=True)
+        if not df_retiros_mes.empty:
+            for _, r in df_retiros_mes.iterrows():
+                f_r_str = r['fecha'] if ('fecha' in r and pd.notna(r['fecha']) and str(r['fecha']) != "None") else "Sin fecha"
+                signo_str = "💸 Retiro" if r['importe'] < 0 or "Retiro" in str(r.get('concepto', '')) else "🟢 Aportación"
+                ca1, ca2, ca3, ca4 = st.columns([2, 5, 2, 1])
+                ca1.write(f"📅 **{f_r_str}**"); ca2.write(f"Motivo: **{r['concepto']}**"); ca3.write(f"{signo_str}: **{abs(r['importe']):,.2f} €**")
+                if ca4.button("❌", key=f"del_ahorro_{r['id']}"):
+                    with engine.begin() as conn:
+                        conn.execute(text("DELETE FROM retiros_ahorro WHERE id = :id"), {"id": int(r['id'])})
+                    st.rerun()
+                    
+        with st.expander("🔻 Registrar un Retiro o Gasto Extraordinario de la Hucha"):
+            st.info(f"💡 **Saldo disponible actualmente en la Hucha ({st.session_state.mes_seleccionado} {anio_sel}): {saldo_mes_hucha:,.2f} €**")
+            with st.form("form_ahorro"):
+                c_ahorro = st.text_input("Motivo del retiro (Ej: Reparación coche, Mueble):")
+                i_ahorro = st.number_input("Importe a retirar (€):", min_value=0.0)
+                f_ahorro = st.date_input("Fecha del gasto extraordinario:")
+                if st.form_submit_button("Guardar Retiro") and c_ahorro and i_ahorro > 0:
+                    with engine.begin() as conn:
+                        conn.execute(text("INSERT INTO retiros_ahorro (anio, mes, concepto, importe, fecha) VALUES (:a, :m, :c, :i, :f)"), {"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "c": str(c_ahorro), "i": -float(i_ahorro), "f": str(f_ahorro)})
+                        conn.execute(text("INSERT INTO movimientos (anio, mes, bloque, concepto, tipo, importe, es_real, fecha_exacta, descripcion_original, cuenta) VALUES (:a, :m, :b, :c, :t, :i, :er, :f, :d, :cta)"), {"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "b": "INGRESOS", "c": "Traspaso desde Ahorro", "t": "INGRESO", "i": float(i_ahorro), "er": 1, "f": str(f_ahorro), "d": f"Traspaso automático ({c_ahorro})", "cta": "operativa"})
+                    st.rerun()
+        st.markdown("---")
     
     df_ing = df_mes[df_mes['tipo'] == 'INGRESO']
     if not df_ing.empty:
@@ -1000,7 +1015,7 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
 elif st.session_state.vista_nivel == 'DETALLE_AGRUPADO':
     st.button("⬅️ Volver al Mes", type="primary", on_click=lambda: st.session_state.update(vista_nivel='MENSUAL'))
     
-    df_movs = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m AND bloque = :b AND concepto = :c"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "b": str(st.session_state.detalle_bloque), "c": str(st.session_state.detalle_concepto)})
+    df_movs = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m AND bloque = :b AND concepto = :c AND cuenta = :cta"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "b": str(st.session_state.detalle_bloque), "c": str(st.session_state.detalle_concepto), "cta": str(st.session_state.cuenta_seleccionada)})
     has_real = (df_movs['es_real'].astype(int) == 1).any()
     if has_real: df_movs = df_movs[df_movs['es_real'].astype(int) == 1]
     
