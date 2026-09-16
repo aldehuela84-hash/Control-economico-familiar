@@ -8,8 +8,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v7.9.5 - Protección Absoluta de Datos Reales (Cero Borrados Automáticos)
-st.set_page_config(page_title="Control Económico Familiar v7.9.5 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.9.6 - Barra Flotante Recuperada y Fix Nómina Jorge
+st.set_page_config(page_title="Control Económico Familiar v7.9.6 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -59,11 +59,17 @@ is_postgres = "postgresql" in str(engine.url)
 
 def auto_clasificar(desc):
     d = str(desc).upper()
+    # 1. Prioridad Nómina Grego
     if any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]):
         return "INGRESOS", "Nómina Grego"
-    if any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "PENSIÓN", "SALARIO", "GUARDIA CIVIL", "DIRECCION GENERAL DE LA POLICIA"]) and not any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]): 
-        return "INGRESOS", "Nómina Jorge"
-    if "TRANSFERENCIA" in d and ("JORGE" in d or "GREGORIA" in d or "GREGO" in d or "BBVA" in d or "ING" in d or "AHORRO" in d): 
+        
+    # 2. Prioridad Nómina Jorge (Evita que caiga en Traspasos)
+    if any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "PENSIÓN", "SALARIO", "GUARDIA CIVIL", "POLICIA", "MINISTERIO", "MINIS.INTERIOR"]) or ("TRANSFERENCIA" in d and ("GUARDIA CIVIL" in d or "MINISTERIO" in d or "INTERIOR" in d or "JORGE ALDEHUELA" in d)):
+        if not any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]): 
+            return "INGRESOS", "Nómina Jorge"
+            
+    # 3. Resto de reglas
+    if "TRANSFERENCIA" in d and ("JORGE" in d or "BBVA" in d or "ING" in d or "AHORRO" in d): 
         return "TRASPASOS", "Movimiento entre cuentas"
     if "BIZUM" in d and ("FAVOR" in d or "RECIBIDO" in d): return "INGRESOS", "Ingreso Bizum"
     if "DEVOLUCION" in d or "RETROCESION" in d or "ABONO" in d: return "INGRESOS", "Devoluciones"
@@ -101,7 +107,6 @@ def obtener_conceptos_bloque(bloque_nombre):
     return sorted(grupos_bd)
 
 def restaurar_presupuesto_base_manual():
-    # 🔒 SOLO SE EJECUTA SI EL USUARIO PULSA EL BOTÓN MANUAL DE LA BARRA LATERAL
     with engine.begin() as conn:
         try:
             conn.execute(text("DELETE FROM movimientos WHERE es_real = 0"))
@@ -160,20 +165,11 @@ def init_db():
             conn.execute(text('''CREATE TABLE IF NOT EXISTS reglas_categorias (id INTEGER PRIMARY KEY AUTOINCREMENT, patron TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, importe_exacto REAL DEFAULT 0.0)'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS configuracion (clave VARCHAR(50) PRIMARY KEY, valor REAL NOT NULL)'''))
 
-        # 🛡️ ASEGURAR COLUMNAS SIN TOCAR NUNCA LOS DATOS REALES
         try:
             conn.execute(text("ALTER TABLE movimientos ADD COLUMN IF NOT EXISTS cuenta VARCHAR(20) DEFAULT 'operativa'"))
             conn.execute(text("UPDATE movimientos SET cuenta = 'operativa' WHERE cuenta IS NULL"))
-        except:
-            pass
-
-        try:
             conn.execute(text("ALTER TABLE meses_cerrados ADD COLUMN IF NOT EXISTS cuenta VARCHAR(20) DEFAULT 'operativa'"))
             conn.execute(text("UPDATE meses_cerrados SET cuenta = 'operativa' WHERE cuenta IS NULL"))
-        except:
-            pass
-            
-        try:
             conn.execute(text("ALTER TABLE meses_cerrados DROP CONSTRAINT IF EXISTS meses_cerrados_pkey"))
             conn.execute(text("ALTER TABLE meses_cerrados ADD PRIMARY KEY (anio, mes, cuenta)"))
         except:
@@ -273,30 +269,6 @@ def obtener_metricas_ahorro_completa(anio, saldo_inicial):
 
 init_db()
 
-# Estilos CSS
-st.markdown("""
-<style>
-    .block-header-gasto { background-color: #1E293B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #3B82F6;}
-    .block-header-ingreso { background-color: #064E3B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #10B981;}
-    .block-header-ahorro { background-color: #4C1D95; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #8B5CF6;}
-    .block-header-traspaso { background-color: #475569; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #94A3B8;}
-    .block-header-pendientes { background-color: #991B1B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 25px; margin-bottom: 10px; border-left: 5px solid #F87171;}
-    .panel-masivo { background-color: #F8FAFC; color: #0F172A; padding: 15px; border-radius: 6px; border: 2px solid #3B82F6; margin-top: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    
-    button[data-testid="baseButton-primary"], 
-    div.stButton > button[kind="primary"],
-    div.stButton > button[type="primary"] {
-        background-color: #2563EB !important;
-        color: #FFFFFF !important;
-        font-weight: bold !important;
-        border: 2px solid #60A5FA !important;
-        box-shadow: 0px 4px 10px rgba(37, 99, 235, 0.6) !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-st.title("💰 Control Económico Familiar v7.9.5 Cloud")
-
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
 if 'mes_seleccionado' not in st.session_state: st.session_state.mes_seleccionado = 'Ene'
@@ -304,6 +276,36 @@ if 'cuenta_seleccionada' not in st.session_state: st.session_state.cuenta_selecc
 if 'detalle_concepto' not in st.session_state: st.session_state.detalle_concepto = None
 if 'detalle_bloque' not in st.session_state: st.session_state.detalle_bloque = None
 if 'enseñar_id' not in st.session_state: st.session_state.enseñar_id = None
+
+# CSS General y Barra Flotante
+st.markdown(f"""
+<style>
+    .block-header-gasto {{ background-color: #1E293B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #3B82F6;}}
+    .block-header-ingreso {{ background-color: #064E3B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #10B981;}}
+    .block-header-ahorro {{ background-color: #4C1D95; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #8B5CF6;}}
+    .block-header-traspaso {{ background-color: #475569; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 10px; border-left: 5px solid #94A3B8;}}
+    .block-header-pendientes {{ background-color: #991B1B; color: #F8FAFC; padding: 10px 15px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 25px; margin-bottom: 10px; border-left: 5px solid #F87171;}}
+    .panel-masivo {{ background-color: #F8FAFC; color: #0F172A; padding: 15px; border-radius: 6px; border: 2px solid #3B82F6; margin-top: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
+    
+    .floating-badge {{
+        position: fixed;
+        top: 3.5rem; 
+        right: 2rem;
+        background-color: #2563EB;
+        color: #FFFFFF;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 16px;
+        font-weight: bold;
+        z-index: 999999;
+        box-shadow: 0px 4px 10px rgba(0,0,0,0.5);
+        border: 2px solid #60A5FA;
+    }}
+</style>
+<div class="floating-badge">🗓️ MES ACTIVO: {st.session_state.mes_seleccionado.upper()}</div>
+""", unsafe_allow_html=True)
+
+st.title("💰 Control Económico Familiar v7.9.6 Cloud")
 
 # ==========================================
 # 🕹️ PANEL DE NAVEGACIÓN LATERAL
@@ -530,7 +532,7 @@ elif st.session_state.vista_nivel == 'ANUAL':
         df_retiros_anual = pd.DataFrame(columns=['id', 'anio', 'mes', 'concepto', 'importe', 'fecha'])
     
     if not df_retiros_anual.empty:
-        with st.expander("🔍 Ver y Gestionar Movimientos Registrados в la Hucha", expanded=False):
+        with st.expander("🔍 Ver y Gestionar Movimientos Registrados en la Hucha", expanded=False):
             for _, r_ret in df_retiros_anual.iterrows():
                 f_ret = r_ret['fecha'] if ('fecha' in r_ret and pd.notna(r_ret['fecha']) and str(r_ret['fecha']) != "None") else "Sin fecha"
                 signo_str = "💸 Retiro" if r_ret['importe'] < 0 else "🟢 Aportación"
