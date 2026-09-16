@@ -8,8 +8,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v7.9.7 - Prioridad Absoluta al Cerebro Personalizado del Usuario
-st.set_page_config(page_title="Control Económico Familiar v7.9.7 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.9.8 - Cuentas 100% independientes y Nómina Estricta
+st.set_page_config(page_title="Control Económico Familiar v7.9.8 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -59,20 +59,25 @@ is_postgres = "postgresql" in str(engine.url)
 
 def auto_clasificar(desc):
     d = str(desc).upper()
+    
     # 1. Prioridad Nómina Grego
     if any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]):
         return "INGRESOS", "Nómina Grego"
         
-    # 2. Prioridad Nómina Jorge (Evita que caiga en Traspasos)
-    if any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "PENSIÓN", "SALARIO", "GUARDIA CIVIL", "POLICIA", "MINISTERIO", "MINIS.INTERIOR"]) or ("TRANSFERENCIA" in d and ("GUARDIA CIVIL" in d or "MINISTERIO" in d or "INTERIOR" in d or "JORGE ALDEHUELA" in d)):
-        if not any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]): 
-            return "INGRESOS", "Nómina Jorge"
+    # 2. Devoluciones (Evita que Mutua Madrileña caiga en Nómina)
+    if any(x in d for x in ["MUTUA", "DEVOLUCION", "RETROCESION", "ABONO", "SINIESTRO"]): 
+        return "INGRESOS", "Devoluciones"
+        
+    # 3. Prioridad Nómina Jorge (Ahora MUY estricta)
+    if any(x in d for x in ["GUARDIA CIVIL", "DIRECCION GENERAL DE LA POLICIA", "MINISTERIO DEL INTERIOR", "MINIS.INTERIOR", "HABERES"]):
+        return "INGRESOS", "Nómina Jorge"
+    if ("NOMINA" in d or "NÓMINA" in d or "SALARIO" in d) and "JORGE" in d:
+        return "INGRESOS", "Nómina Jorge"
             
-    # 3. Resto de reglas por defecto
+    # 4. Resto de reglas por defecto
     if "TRANSFERENCIA" in d and ("JORGE" in d or "BBVA" in d or "ING" in d or "AHORRO" in d): 
         return "TRASPASOS", "Movimiento entre cuentas"
     if "BIZUM" in d and ("FAVOR" in d or "RECIBIDO" in d): return "INGRESOS", "Ingreso Bizum"
-    if "DEVOLUCION" in d or "RETROCESION" in d or "ABONO" in d: return "INGRESOS", "Devoluciones"
     if any(x in d for x in ["IBERDROLA", "ENDESA", "NATURGY", "REPSOL LUZ", "CURENERGIA", "ENEL", "AGUAS", "CANAL DE ISABEL", "AQUALIA", "GANA ENERGIA"]): return "VIVIENDA", "Luz gas, agua"
     if any(x in d for x in ["HIPOTECA", "PRESTAMO", "ING DIRECT", "CUOTA PRESTAMO"]): return "VIVIENDA", "Hipoteca chalet"
     if any(x in d for x in ["MOVISTAR", "VODAFONE", "ORANGE", "JAZZTEL", "DIGI", "O2", "LOWI", "SIMYO", "PEPEPHONE", "MASMOVIL"]): return "VIVIENDA", "Telf. Internet."
@@ -81,7 +86,7 @@ def auto_clasificar(desc):
     if any(x in d for x in ["MERCADONA", "CARREFOUR", "ALCAMPO", "AHORRAMAS", "LIDL", "ALDI", "DIA", "STELAM MARKET", "EROSKI", "ALIMERKA", "CONSUM", "HIPERCOR", "SUPERCOR"]): return "COMIDA", "Alimentacion"
     if any(x in d for x in ["REPSOL", "CEPSA", "PLENOIL", "BALLENOIL", "GALP", "BP", "SHELL", "PETROPRIX", "GREEN GAS", "EASYGAS"]): return "COCHES", "Combustible"
     if any(x in d for x in ["TALLER", "NORAUTO", "MIDAS", "ITV", "RECAMBIOS", "OSCARO", "AUTODOC", "NEUMATICOS"]): return "COCHES", "Mantenimiento"
-    if any(x in d for x in ["SEGURO AUTO", "LINEA DIRECTA", "MAPFRE", "MUTUA", "ALLIANZ", "PELAYO", "QUALITAS", "AXA"]) and "VIDA" not in d: return "COCHES", "Seguros"
+    if any(x in d for x in ["SEGURO AUTO", "LINEA DIRECTA", "MAPFRE", "ALLIANZ", "PELAYO", "QUALITAS", "AXA"]) and "VIDA" not in d: return "COCHES", "Seguros"
     if any(x in d for x in ["AMAZON", "ALIEXPRESS", "SHEIN", "ZARA", "PRIMARK", "DECATHLON", "LEROY", "IKEA", "MR DIY", "WALLAPOP", "VINTED", "EL CORTE INGLES", "MEDIA MARKT", "ZALANDO", "MANGO", "STRADIVARIUS", "PULL", "BERSHKA", "H&M"]): return "COMPRAS", "Amazon/Aliexpres"
     if any(x in d for x in ["FARMACIA", "CLINICA", "DENTAL", "DENTISTA", "OPTICA", "CENTRO EVEL", "HOSPITAL", "FISIOTERAPIA"]): return "GASTOS PERSONALES", "Salud"
     if any(x in d for x in ["PSICOLOGO", "TERAPIA"]): return "GASTOS PERSONALES", "Psicologo"
@@ -241,27 +246,32 @@ def obtener_metricas_ahorro_completa(anio, saldo_inicial):
     
     for a in range(2026, anio + 1):
         for m in MESES_ORDEN:
+            # 1. Calculamos operativa solo de forma informativa
             sub_op = df_m_limpio[(df_m_limpio['anio'] == a) & (df_m_limpio['mes'] == m) & (df_m_limpio['cuenta'] == 'operativa')]
             ing_op = sub_op[sub_op['tipo'] == 'INGRESO']['importe'].sum()
             gas_op = sub_op[sub_op['tipo'] == 'GASTO']['importe'].sum()
-            sobrante = ing_op - gas_op
+            sobrante_op = ing_op - gas_op
             
+            # 2. Calculamos los movimientos REALES importados en la hucha
             sub_ah = df_m_limpio[(df_m_limpio['anio'] == a) & (df_m_limpio['mes'] == m) & (df_m_limpio['cuenta'] == 'ahorro')]
             ing_ah = sub_ah[sub_ah['tipo'] == 'INGRESO']['importe'].sum()
             gas_ah = sub_ah[sub_ah['tipo'] == 'GASTO']['importe'].sum()
             
+            # 3. Movimientos manuales de la hucha
             sub_r = df_r[(df_r['anio'] == a) & (df_r['mes'] == m)] if not df_r.empty else pd.DataFrame()
             ret_mes = sub_r['importe'].sum() if not sub_r.empty else 0.0
             
-            neto_mes_ahorro = (sobrante + (ing_ah - gas_ah) + ret_mes)
+            # ⚠️ CAMBIO CRUCIAL: La hucha ya NO suma el sobrante de la cuenta operativa.
+            # Solo se modifica con lo que pase dentro de la cuenta 'ahorro' + aportes manuales
+            neto_mes_ahorro = (ing_ah - gas_ah) + ret_mes
             saldo_acum += neto_mes_ahorro
                 
             if a == anio:
                 data_meses.append({
                     "Mes": m,
-                    "Ahorro Generado (Sobrante)": sobrante,
-                    "Movimientos Hucha (+/-)": (ing_ah - gas_ah) + ret_mes,
-                    "Saldo Acumulado Hucha": saldo_acum
+                    "Sobrante Operativa (Real)": sobrante_op,
+                    "Movs. Reales Hucha (+/-)": neto_mes_ahorro,
+                    "Saldo Acum. Hucha": saldo_acum
                 })
                 
     df_res = pd.DataFrame(data_meses)
@@ -305,7 +315,7 @@ st.markdown(f"""
 <div class="floating-badge">🗓️ MES ACTIVO: {st.session_state.mes_seleccionado.upper()}</div>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v7.9.7 Cloud")
+st.title("💰 Control Económico Familiar v7.9.8 Cloud")
 
 # ==========================================
 # 🕹️ PANEL DE NAVEGACIÓN LATERAL
@@ -796,7 +806,7 @@ elif st.session_state.vista_nivel == 'MENSUAL':
     sobrante_mes = ing_m - gas_m
 
     df_ahorro_a, _ = obtener_metricas_ahorro_completa(anio_sel, nuevo_saldo_ini)
-    saldo_mes_hucha = df_ahorro_a[df_ahorro_a['Mes'] == st.session_state.mes_seleccionado]['Saldo Acumulado Hucha'].values[0]
+    saldo_mes_hucha = df_ahorro_a[df_ahorro_a['Mes'] == st.session_state.mes_seleccionado]['Saldo Acum. Hucha'].values[0]
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(f"Ingresos Mes ({nombre_cuenta_txt})", f"{ing_m:,.2f} €")
