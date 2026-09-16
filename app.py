@@ -8,8 +8,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v7.9.3 - Blindaje de Inicialización y Borrado Seguro
-st.set_page_config(page_title="Control Económico Familiar v7.9.3 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.9.4 - Solución a Bloqueo de Conexiones (Deadlock)
+st.set_page_config(page_title="Control Económico Familiar v7.9.4 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -143,6 +143,8 @@ def restaurar_presupuesto_base():
         )
 
 def init_db():
+    count_prev = -1
+    
     with engine.begin() as conn:
         if is_postgres:
             conn.execute(text('''CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, partida_recurrente_id INTEGER, anio INTEGER NOT NULL, mes VARCHAR(10) NOT NULL, bloque VARCHAR(50) NOT NULL, concepto VARCHAR(100) NOT NULL, tipo VARCHAR(20) NOT NULL, importe NUMERIC(10,2) NOT NULL, es_real INTEGER DEFAULT 0, fecha_exacta VARCHAR(20), descripcion_original TEXT, cuenta VARCHAR(20) DEFAULT 'operativa')'''))
@@ -188,12 +190,13 @@ def init_db():
             conn.execute(text("INSERT INTO configuracion (clave, valor) VALUES ('saldo_inicial_sep_2026', 3500.0)"))
             
         try:
-            count = conn.execute(text("SELECT COUNT(*) FROM movimientos WHERE es_real = 0")).fetchone()[0]
+            count_prev = conn.execute(text("SELECT COUNT(*) FROM movimientos WHERE es_real = 0")).fetchone()[0]
         except:
-            count = 0
-            
-        if count == 0:
-            restaurar_presupuesto_base()
+            count_prev = 0
+
+    # 🚀 LA SOLUCIÓN: Ejecutamos el volcado FUERA de la primera conexión (una vez que ésta se ha cerrado y guardado cambios)
+    if count_prev == 0:
+        restaurar_presupuesto_base()
 
 def limpiar_duplicados_df(df_mov):
     if df_mov.empty: return df_mov
@@ -307,7 +310,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v7.9.3 Cloud")
+st.title("💰 Control Económico Familiar v7.9.4 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -432,7 +435,7 @@ if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
             with st.expander(f"🟢 **{r['concepto']}** | Importe actual en {st.session_state.mes_seleccionado}: **{r['importe']:,.2f} €**"):
                 with st.form(f"form_edit_prev_{r['id']}"):
                     n_imp = st.number_input("Nuevo importe previsto (€):", value=float(r['importe']), step=10.0)
-                    modo_alcance = st.radio("¿A qué meses aplicar هذا cambio?", ["A) Solo a este mes", "B) Desde este mes en adelante (Hasta Dic)", "C) A todos los 12 meses del año"])
+                    modo_alcance = st.radio("¿A qué meses aplicar este cambio?", ["A) Solo a este mes", "B) Desde este mes en adelante (Hasta Dic)", "C) A todos los 12 meses del año"])
                     c_act1, c_act2 = st.columns([3, 1])
                     sub_btn = c_act1.form_submit_button("💾 Guardar Cambios")
                     del_btn = c_act2.form_submit_button("🗑️ Eliminar Previsión")
