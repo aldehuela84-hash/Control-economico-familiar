@@ -8,8 +8,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v7.9.2 - Blindaje Definitivo de Migración de Columnas
-st.set_page_config(page_title="Control Económico Familiar v7.9.2 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.9.3 - Blindaje de Inicialización y Borrado Seguro
+st.set_page_config(page_title="Control Económico Familiar v7.9.3 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -59,19 +59,12 @@ is_postgres = "postgresql" in str(engine.url)
 
 def auto_clasificar(desc):
     d = str(desc).upper()
-    
-    # 🛡️ BLINDAJE ABSOLUTO 1: Nómina de Grego
     if any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]):
         return "INGRESOS", "Nómina Grego"
-        
-    # 🛡️ BLINDAJE ABSOLUTO 2: Nómina de Jorge
     if any(x in d for x in ["NOMINA", "NÓMINA", "HABERES", "PENSIÓN", "SALARIO", "GUARDIA CIVIL", "DIRECCION GENERAL DE LA POLICIA"]) and not any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]): 
         return "INGRESOS", "Nómina Jorge"
-        
-    # 🔄 Traspasos internos cruzados
     if "TRANSFERENCIA" in d and ("JORGE" in d or "GREGORIA" in d or "GREGO" in d or "BBVA" in d or "ING" in d or "AHORRO" in d): 
         return "TRASPASOS", "Movimiento entre cuentas"
-        
     if "BIZUM" in d and ("FAVOR" in d or "RECIBIDO" in d): return "INGRESOS", "Ingreso Bizum"
     if "DEVOLUCION" in d or "RETROCESION" in d or "ABONO" in d: return "INGRESOS", "Devoluciones"
     if any(x in d for x in ["IBERDROLA", "ENDESA", "NATURGY", "REPSOL LUZ", "CURENERGIA", "ENEL", "AGUAS", "CANAL DE ISABEL", "AQUALIA", "GANA ENERGIA"]): return "VIVIENDA", "Luz gas, agua"
@@ -98,7 +91,10 @@ def auto_clasificar(desc):
     return None, None
 
 def obtener_conceptos_bloque(bloque_nombre):
-    grupos_bd = pd.read_sql_query(text("SELECT DISTINCT concepto FROM movimientos WHERE bloque = :b"), engine, params={"b": bloque_nombre})['concepto'].tolist()
+    try:
+        grupos_bd = pd.read_sql_query(text("SELECT DISTINCT concepto FROM movimientos WHERE bloque = :b"), engine, params={"b": bloque_nombre})['concepto'].tolist()
+    except:
+        grupos_bd = []
     for c in DICCIONARIO_EXCEL.get(bloque_nombre, []):
         if c not in grupos_bd:
             grupos_bd.append(c)
@@ -106,7 +102,10 @@ def obtener_conceptos_bloque(bloque_nombre):
 
 def restaurar_presupuesto_base():
     with engine.begin() as conn:
-        conn.execute(text("DELETE FROM movimientos WHERE es_real = 0"))
+        try:
+            conn.execute(text("DELETE FROM movimientos WHERE es_real = 0"))
+        except Exception:
+            pass
         
         base_mensual = [
             ("VIVIENDA", "Hipoteca chalet", 700.0), ("VIVIENDA", "Hipoteca piso", 600.0),
@@ -160,24 +159,24 @@ def init_db():
             conn.execute(text('''CREATE TABLE IF NOT EXISTS reglas_categorias (id INTEGER PRIMARY KEY AUTOINCREMENT, patron TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, importe_exacto REAL DEFAULT 0.0)'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS configuracion (clave VARCHAR(50) PRIMARY KEY, valor REAL NOT NULL)'''))
 
-        # 🛡️ FORZAR ADICIÓN DE COLUMNA 'cuenta' SI LA TABLA YA EXISTÍA SIN ELLA
+        # 🛡️ ASEGURAR COLUMNAS
         try:
             conn.execute(text("ALTER TABLE movimientos ADD COLUMN IF NOT EXISTS cuenta VARCHAR(20) DEFAULT 'operativa'"))
             conn.execute(text("UPDATE movimientos SET cuenta = 'operativa' WHERE cuenta IS NULL"))
-        except Exception as e:
-            print("Info migración movimientos:", e)
+        except:
+            pass
 
         try:
             conn.execute(text("ALTER TABLE meses_cerrados ADD COLUMN IF NOT EXISTS cuenta VARCHAR(20) DEFAULT 'operativa'"))
             conn.execute(text("UPDATE meses_cerrados SET cuenta = 'operativa' WHERE cuenta IS NULL"))
-        except Exception as e:
-            print("Info migración meses_cerrados:", e)
+        except:
+            pass
             
         try:
             conn.execute(text("ALTER TABLE meses_cerrados DROP CONSTRAINT IF EXISTS meses_cerrados_pkey"))
             conn.execute(text("ALTER TABLE meses_cerrados ADD PRIMARY KEY (anio, mes, cuenta)"))
-        except Exception as e:
-            print("Info primary key meses_cerrados:", e)
+        except:
+            pass
 
         try:
             conn.execute(text("DELETE FROM reglas_categorias WHERE UPPER(patron) LIKE '%GREGO%' OR UPPER(patron) LIKE '%MARCHAL%'"))
@@ -188,7 +187,11 @@ def init_db():
         if res is None:
             conn.execute(text("INSERT INTO configuracion (clave, valor) VALUES ('saldo_inicial_sep_2026', 3500.0)"))
             
-        count = conn.execute(text("SELECT COUNT(*) FROM movimientos WHERE es_real = 0")).fetchone()[0]
+        try:
+            count = conn.execute(text("SELECT COUNT(*) FROM movimientos WHERE es_real = 0")).fetchone()[0]
+        except:
+            count = 0
+            
         if count == 0:
             restaurar_presupuesto_base()
 
@@ -236,14 +239,16 @@ def limpiar_duplicados_df(df_mov):
     return pd.concat(res)
 
 def obtener_metricas_ahorro_completa(anio, saldo_inicial):
-    # Consulta segura comprobando si existe la columna cuenta en la base de datos antes de seleccionarla
     try:
         df_m = pd.read_sql_query(text("SELECT anio, mes, bloque, concepto, tipo, importe, es_real, cuenta FROM movimientos WHERE anio <= :anio"), engine, params={"anio": anio})
     except:
         df_m = pd.read_sql_query(text("SELECT anio, mes, bloque, concepto, tipo, importe, es_real FROM movimientos WHERE anio <= :anio"), engine, params={"anio": anio})
         df_m['cuenta'] = 'operativa'
 
-    df_r = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio <= :anio"), engine, params={"anio": anio})
+    try:
+        df_r = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio <= :anio"), engine, params={"anio": anio})
+    except:
+        df_r = pd.DataFrame(columns=['anio', 'mes', 'concepto', 'importe', 'fecha'])
     
     df_m_limpio = limpiar_duplicados_df(df_m)
     
@@ -261,7 +266,7 @@ def obtener_metricas_ahorro_completa(anio, saldo_inicial):
             ing_ah = sub_ah[sub_ah['tipo'] == 'INGRESO']['importe'].sum()
             gas_ah = sub_ah[sub_ah['tipo'] == 'GASTO']['importe'].sum()
             
-            sub_r = df_r[(df_r['anio'] == a) & (df_r['mes'] == m)]
+            sub_r = df_r[(df_r['anio'] == a) & (df_r['mes'] == m)] if not df_r.empty else pd.DataFrame()
             ret_mes = sub_r['importe'].sum() if not sub_r.empty else 0.0
             
             neto_mes_ahorro = (sobrante + (ing_ah - gas_ah) + ret_mes)
@@ -302,7 +307,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v7.9.2 Cloud")
+st.title("💰 Control Económico Familiar v7.9.3 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -326,7 +331,10 @@ except:
     except:
         meses_cerrados_df = pd.DataFrame(columns=['anio', 'mes', 'cuenta'])
 
-saldo_inicial_db = pd.read_sql_query(text("SELECT valor FROM configuracion WHERE clave = 'saldo_inicial_sep_2026'"), engine).iloc[0]['valor']
+try:
+    saldo_inicial_db = pd.read_sql_query(text("SELECT valor FROM configuracion WHERE clave = 'saldo_inicial_sep_2026'"), engine).iloc[0]['valor']
+except:
+    saldo_inicial_db = 3500.0
 
 anio_sel = st.sidebar.selectbox("Seleccionar Año:", list(range(2026, 2036)), index=0)
 
@@ -352,7 +360,11 @@ if nuevo_saldo_ini != saldo_inicial_db:
 st.sidebar.markdown("---")
 st.sidebar.subheader("🛡️ Copia de Seguridad (Cerebro/Reglas)")
 
-df_reglas_actuales = pd.read_sql_query(text("SELECT patron, bloque, concepto, importe_exacto FROM reglas_categorias"), engine)
+try:
+    df_reglas_actuales = pd.read_sql_query(text("SELECT patron, bloque, concepto, importe_exacto FROM reglas_categorias"), engine)
+except:
+    df_reglas_actuales = pd.DataFrame(columns=['patron', 'bloque', 'concepto', 'importe_exacto'])
+
 json_reglas = df_reglas_actuales.to_json(orient="records", force_ascii=False)
 st.sidebar.download_button(
     label="💾 Exportar Reglas (Backup)",
@@ -420,7 +432,7 @@ if st.session_state.vista_nivel == 'GESTION_PREVISIONES':
             with st.expander(f"🟢 **{r['concepto']}** | Importe actual en {st.session_state.mes_seleccionado}: **{r['importe']:,.2f} €**"):
                 with st.form(f"form_edit_prev_{r['id']}"):
                     n_imp = st.number_input("Nuevo importe previsto (€):", value=float(r['importe']), step=10.0)
-                    modo_alcance = st.radio("¿A qué meses aplicar este cambio?", ["A) Solo a este mes", "B) Desde este mes en adelante (Hasta Dic)", "C) A todos los 12 meses del año"])
+                    modo_alcance = st.radio("¿A qué meses aplicar هذا cambio?", ["A) Solo a este mes", "B) Desde este mes en adelante (Hasta Dic)", "C) A todos los 12 meses del año"])
                     c_act1, c_act2 = st.columns([3, 1])
                     sub_btn = c_act1.form_submit_button("💾 Guardar Cambios")
                     del_btn = c_act2.form_submit_button("🗑️ Eliminar Previsión")
@@ -524,7 +536,10 @@ elif st.session_state.vista_nivel == 'ANUAL':
                 st.success(f"Movimiento registrado en la Hucha ({m_ret_anual} {anio_sel}) e ingreso generado con éxito.")
                 time.sleep(1.5); st.rerun()
 
-    df_retiros_anual = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio = :anio ORDER BY id ASC"), engine, params={"anio": anio_sel})
+    try:
+        df_retiros_anual = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio = :anio ORDER BY id ASC"), engine, params={"anio": anio_sel})
+    except:
+        df_retiros_anual = pd.DataFrame(columns=['id', 'anio', 'mes', 'concepto', 'importe', 'fecha'])
     
     if not df_retiros_anual.empty:
         with st.expander("🔍 Ver y Gestionar Movimientos Registrados en la Hucha", expanded=False):
@@ -663,7 +678,10 @@ elif st.session_state.vista_nivel == 'MENSUAL':
     except:
         es_cerrado = False
 
-    reglas_df = pd.read_sql_query(text("SELECT patron, bloque, concepto, COALESCE(importe_exacto, 0.0) as importe_exacto FROM reglas_categorias"), engine)
+    try:
+        reglas_df = pd.read_sql_query(text("SELECT patron, bloque, concepto, COALESCE(importe_exacto, 0.0) as importe_exacto FROM reglas_categorias"), engine)
+    except:
+        reglas_df = pd.DataFrame(columns=['patron', 'bloque', 'concepto', 'importe_exacto'])
     
     nombre_cuenta_txt = "CUENTA OPERATIVA" if st.session_state.cuenta_seleccionada == 'operativa' else "CUENTA DE AHORRO"
     
@@ -774,7 +792,10 @@ elif st.session_state.vista_nivel == 'MENSUAL':
         df_mes = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado)})
         df_mes['cuenta'] = 'operativa'
 
-    df_retiros_mes = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio = :a AND mes = :m"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado)})
+    try:
+        df_retiros_mes = pd.read_sql_query(text("SELECT * FROM retiros_ahorro WHERE anio = :a AND mes = :m"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado)})
+    except:
+        df_retiros_mes = pd.DataFrame(columns=['id', 'anio', 'mes', 'concepto', 'importe', 'fecha'])
     
     df_mes_limpio = limpiar_duplicados_df(df_mes)
     
@@ -1024,7 +1045,10 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
         condicion_regla = st.radio("¿Cómo debe detectar la regla los siguientes movimientos?", ["1) Solo por Palabra Clave (Ej: MERCADONA)", f"2) Por Palabra Clave + IMPORTE EXACTO ({nuevo_importe:,.2f} €)"])
         patron = st.text_input("Palabra clave a buscar en el extracto del banco:", value=str(desc_orig).split()[0] if desc_orig else "")
         if patron and len(patron.strip()) >= 2:
-            df_conflicto = pd.read_sql_query(text("SELECT * FROM reglas_categorias WHERE UPPER(patron) = :p"), engine, params={"p": patron.strip().upper()})
+            try:
+                df_conflicto = pd.read_sql_query(text("SELECT * FROM reglas_categorias WHERE UPPER(patron) = :p"), engine, params={"p": patron.strip().upper()})
+            except:
+                df_conflicto = pd.DataFrame()
             if not df_conflicto.empty:
                 regla_ant = df_conflicto.iloc[0]
                 if regla_ant['bloque'] != bloque_in or regla_ant['concepto'] != concepto_in:
@@ -1037,7 +1061,10 @@ elif st.session_state.vista_nivel == 'ENSENAR_REGLA':
                 
                 if "REGLA" in ambito and patron and len(patron.strip()) >= 2:
                     imp_exacto_val = float(nuevo_importe) if "EXACTO" in condicion_regla else 0.0
-                    df_existe = pd.read_sql_query(text("SELECT id FROM reglas_categorias WHERE UPPER(patron) = :p"), engine, params={"p": patron.strip().upper()})
+                    try:
+                        df_existe = pd.read_sql_query(text("SELECT id FROM reglas_categorias WHERE UPPER(patron) = :p"), engine, params={"p": patron.strip().upper()})
+                    except:
+                        df_existe = pd.DataFrame()
                     if not df_existe.empty:
                         conn.execute(text("UPDATE reglas_categorias SET bloque = :b, concepto = :c, importe_exacto = :i WHERE id = :id"), {"b": bloque_in, "c": concepto_in.strip(), "i": imp_exacto_val, "id": int(df_existe.iloc[0]['id'])})
                     else:
@@ -1069,7 +1096,10 @@ elif st.session_state.vista_nivel == 'DETALLE_AGRUPADO':
         
     mov_ids = tuple(df_movs['id'].tolist())
     if mov_ids:
-        df_t = pd.read_sql_query(text("SELECT * FROM desgloses WHERE movimiento_id = :mid"), engine, params={"mid": int(mov_ids[0])})
+        try:
+            df_t = pd.read_sql_query(text("SELECT * FROM desgloses WHERE movimiento_id = :mid"), engine, params={"mid": int(mov_ids[0])})
+        except:
+            df_t = pd.DataFrame(columns=['id', 'movimiento_id', 'subconcepto', 'importe', 'fecha'])
         st.markdown("#### 📝 Añadir Tickets o Sub-Gastos Manuales")
         if not df_t.empty:
             for _, r in df_t.iterrows():
