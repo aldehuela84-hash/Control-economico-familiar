@@ -8,8 +8,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v7.9.4 - Solución a Bloqueo de Conexiones (Deadlock)
-st.set_page_config(page_title="Control Económico Familiar v7.9.4 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.9.5 - Protección Absoluta de Datos Reales (Cero Borrados Automáticos)
+st.set_page_config(page_title="Control Económico Familiar v7.9.5 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -100,7 +100,8 @@ def obtener_conceptos_bloque(bloque_nombre):
             grupos_bd.append(c)
     return sorted(grupos_bd)
 
-def restaurar_presupuesto_base():
+def restaurar_presupuesto_base_manual():
+    # 🔒 SOLO SE EJECUTA SI EL USUARIO PULSA EL BOTÓN MANUAL DE LA BARRA LATERAL
     with engine.begin() as conn:
         try:
             conn.execute(text("DELETE FROM movimientos WHERE es_real = 0"))
@@ -143,8 +144,6 @@ def restaurar_presupuesto_base():
         )
 
 def init_db():
-    count_prev = -1
-    
     with engine.begin() as conn:
         if is_postgres:
             conn.execute(text('''CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, partida_recurrente_id INTEGER, anio INTEGER NOT NULL, mes VARCHAR(10) NOT NULL, bloque VARCHAR(50) NOT NULL, concepto VARCHAR(100) NOT NULL, tipo VARCHAR(20) NOT NULL, importe NUMERIC(10,2) NOT NULL, es_real INTEGER DEFAULT 0, fecha_exacta VARCHAR(20), descripcion_original TEXT, cuenta VARCHAR(20) DEFAULT 'operativa')'''))
@@ -161,7 +160,7 @@ def init_db():
             conn.execute(text('''CREATE TABLE IF NOT EXISTS reglas_categorias (id INTEGER PRIMARY KEY AUTOINCREMENT, patron TEXT NOT NULL, bloque TEXT NOT NULL, concepto TEXT NOT NULL, importe_exacto REAL DEFAULT 0.0)'''))
             conn.execute(text('''CREATE TABLE IF NOT EXISTS configuracion (clave VARCHAR(50) PRIMARY KEY, valor REAL NOT NULL)'''))
 
-        # 🛡️ ASEGURAR COLUMNAS
+        # 🛡️ ASEGURAR COLUMNAS SIN TOCAR NUNCA LOS DATOS REALES
         try:
             conn.execute(text("ALTER TABLE movimientos ADD COLUMN IF NOT EXISTS cuenta VARCHAR(20) DEFAULT 'operativa'"))
             conn.execute(text("UPDATE movimientos SET cuenta = 'operativa' WHERE cuenta IS NULL"))
@@ -180,23 +179,9 @@ def init_db():
         except:
             pass
 
-        try:
-            conn.execute(text("DELETE FROM reglas_categorias WHERE UPPER(patron) LIKE '%GREGO%' OR UPPER(patron) LIKE '%MARCHAL%'"))
-        except:
-            pass
-
         res = conn.execute(text("SELECT valor FROM configuracion WHERE clave = 'saldo_inicial_sep_2026'")).fetchone()
         if res is None:
             conn.execute(text("INSERT INTO configuracion (clave, valor) VALUES ('saldo_inicial_sep_2026', 3500.0)"))
-            
-        try:
-            count_prev = conn.execute(text("SELECT COUNT(*) FROM movimientos WHERE es_real = 0")).fetchone()[0]
-        except:
-            count_prev = 0
-
-    # 🚀 LA SOLUCIÓN: Ejecutamos el volcado FUERA de la primera conexión (una vez que ésta se ha cerrado y guardado cambios)
-    if count_prev == 0:
-        restaurar_presupuesto_base()
 
 def limpiar_duplicados_df(df_mov):
     if df_mov.empty: return df_mov
@@ -310,7 +295,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v7.9.4 Cloud")
+st.title("💰 Control Económico Familiar v7.9.5 Cloud")
 
 if 'vista_nivel' not in st.session_state: st.session_state.vista_nivel = 'ANUAL'
 if 'vista_anterior' not in st.session_state: st.session_state.vista_anterior = 'ANUAL'
@@ -414,9 +399,9 @@ if st.sidebar.button(f"🧨 Borrar Banco SOLO de {mes_actual_str} {anio_sel} ({c
     st.sidebar.success(f"¡Movimientos reales de {mes_actual_str} {anio_sel} ({cuenta_actual_str}) borrados!")
     time.sleep(1.5); st.rerun()
     
-if st.sidebar.button("🔁 Restaurar Presupuesto Base"):
-    restaurar_presupuesto_base()
-    st.sidebar.success("¡Presupuesto restaurado en todos los años!")
+if st.sidebar.button("🔁 Restaurar Presupuesto Base (Manual)"):
+    restaurar_presupuesto_base_manual()
+    st.sidebar.success("¡Presupuesto base restaurado!")
     time.sleep(1.5); st.rerun()
 
 # ==========================================
@@ -545,7 +530,7 @@ elif st.session_state.vista_nivel == 'ANUAL':
         df_retiros_anual = pd.DataFrame(columns=['id', 'anio', 'mes', 'concepto', 'importe', 'fecha'])
     
     if not df_retiros_anual.empty:
-        with st.expander("🔍 Ver y Gestionar Movimientos Registrados en la Hucha", expanded=False):
+        with st.expander("🔍 Ver y Gestionar Movimientos Registrados в la Hucha", expanded=False):
             for _, r_ret in df_retiros_anual.iterrows():
                 f_ret = r_ret['fecha'] if ('fecha' in r_ret and pd.notna(r_ret['fecha']) and str(r_ret['fecha']) != "None") else "Sin fecha"
                 signo_str = "💸 Retiro" if r_ret['importe'] < 0 else "🟢 Aportación"
