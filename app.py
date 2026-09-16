@@ -8,8 +8,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v7.9.6 - Barra Flotante Recuperada y Fix Nómina Jorge
-st.set_page_config(page_title="Control Económico Familiar v7.9.6 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.9.7 - Prioridad Absoluta al Cerebro Personalizado del Usuario
+st.set_page_config(page_title="Control Económico Familiar v7.9.7 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -68,7 +68,7 @@ def auto_clasificar(desc):
         if not any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]): 
             return "INGRESOS", "Nómina Jorge"
             
-    # 3. Resto de reglas
+    # 3. Resto de reglas por defecto
     if "TRANSFERENCIA" in d and ("JORGE" in d or "BBVA" in d or "ING" in d or "AHORRO" in d): 
         return "TRASPASOS", "Movimiento entre cuentas"
     if "BIZUM" in d and ("FAVOR" in d or "RECIBIDO" in d): return "INGRESOS", "Ingreso Bizum"
@@ -305,7 +305,7 @@ st.markdown(f"""
 <div class="floating-badge">🗓️ MES ACTIVO: {st.session_state.mes_seleccionado.upper()}</div>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v7.9.6 Cloud")
+st.title("💰 Control Económico Familiar v7.9.7 Cloud")
 
 # ==========================================
 # 🕹️ PANEL DE NAVEGACIÓN LATERAL
@@ -744,21 +744,23 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                 bloque_val, concepto_limpio = "PENDIENTE", desc_orig
                                 matched = False
                                 
-                                b_ia, c_ia = auto_clasificar(desc_orig)
-                                if b_ia and c_ia:
-                                    bloque_val, concepto_limpio = b_ia, c_ia
-                                    if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
-                                    matched = True
+                                # 1. PRIORIDAD ABSOLUTA: El cerebro del usuario (reglas personalizadas)
+                                for _, r_rule in reglas_df.iterrows():
+                                    patron_ok = str(r_rule['patron']).upper() in desc_orig.upper()
+                                    imp_rule = float(r_rule['importe_exacto'] or 0.0)
+                                    imp_ok = True if imp_rule == 0.0 else (abs(imp_rule - imp_abs) < 0.01)
+                                    if patron_ok and imp_ok:
+                                        bloque_val, concepto_limpio = r_rule['bloque'], r_rule['concepto']
+                                        if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
+                                        matched = True; break
                                 
+                                # 2. Si el cerebro no sabe qué es, tiramos de las reglas automáticas por defecto
                                 if not matched:
-                                    for _, r_rule in reglas_df.iterrows():
-                                        patron_ok = str(r_rule['patron']).upper() in desc_orig.upper()
-                                        imp_rule = float(r_rule['importe_exacto'] or 0.0)
-                                        imp_ok = True if imp_rule == 0.0 else (abs(imp_rule - imp_abs) < 0.01)
-                                        if patron_ok and imp_ok:
-                                            bloque_val, concepto_limpio = r_rule['bloque'], r_rule['concepto']
-                                            if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
-                                            matched = True; break
+                                    b_ia, c_ia = auto_clasificar(desc_orig)
+                                    if b_ia and c_ia:
+                                        bloque_val, concepto_limpio = b_ia, c_ia
+                                        if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
+                                        matched = True
 
                                 if tipo_val == "INGRESO" and not matched: bloque_val = "INGRESOS"
                                     
