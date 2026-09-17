@@ -8,8 +8,8 @@ import streamlit as st
 import sqlalchemy
 from sqlalchemy import create_engine, text
 
-# 🆕 VERSIÓN ACTUALIZADA A v7.9.8 - Cuentas 100% independientes y Nómina Estricta
-st.set_page_config(page_title="Control Económico Familiar v7.9.8 Cloud", page_icon="💰", layout="wide")
+# 🆕 VERSIÓN ACTUALIZADA A v7.9.9 - Blindaje Anti-Borrado (Supabase Obligatorio)
+st.set_page_config(page_title="Control Económico Familiar v7.9.9 Cloud", page_icon="💰", layout="wide")
 
 MESES_ORDEN = ["Ene", "Feb", "Mar", "Abril", "Mayo", "Jun", "Jul", "Agos", "Sep", "Oct", "Nov", "Dic"]
 MESES_MAPPING_NUM = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abril", 5: "Mayo", 6: "Jun", 7: "Jul", 8: "Agos", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -39,14 +39,18 @@ DICCIONARIO_EXCEL = {
 }
 
 # ==========================================
-# 🗄️ CONEXIÓN A BASE DE DATOS
+# 🗄️ CONEXIÓN A BASE DE DATOS (BLINDADA SUPABASE)
 # ==========================================
 def get_db_engine():
+    db_url = None
     if "DATABASE_URL" in st.secrets:
         db_url = st.secrets["DATABASE_URL"]
     elif "postgres" in st.secrets and "url" in st.secrets["postgres"]:
         db_url = st.secrets["postgres"]["url"]
-    else:
+    
+    if not db_url:
+        # ALERTA CRÍTICA: Si no hay secretos configurados, avisamos en pantalla para no usar SQLite local
+        st.error("🚨 ERROR CRÍTICO DE CONFIGURACIÓN: No se detecta la URL de Supabase en los 'Secrets' de Streamlit. Si usas SQLite localmente, los datos se borrarán al inactivosarse la app. Configura st.secrets['DATABASE_URL'].")
         db_url = os.environ.get("DATABASE_URL", "sqlite:///economia_familiar.db")
         
     if db_url.startswith("postgres://"):
@@ -64,11 +68,11 @@ def auto_clasificar(desc):
     if any(x in d for x in ["GREGO", "GREGORIA", "MARCHAL"]):
         return "INGRESOS", "Nómina Grego"
         
-    # 2. Devoluciones (Evita que Mutua Madrileña caiga en Nómina)
+    # 2. Devoluciones
     if any(x in d for x in ["MUTUA", "DEVOLUCION", "RETROCESION", "ABONO", "SINIESTRO"]): 
         return "INGRESOS", "Devoluciones"
         
-    # 3. Prioridad Nómina Jorge (Ahora MUY estricta)
+    # 3. Prioridad Nómina Jorge
     if any(x in d for x in ["GUARDIA CIVIL", "DIRECCION GENERAL DE LA POLICIA", "MINISTERIO DEL INTERIOR", "MINIS.INTERIOR", "HABERES"]):
         return "INGRESOS", "Nómina Jorge"
     if ("NOMINA" in d or "NÓMINA" in d or "SALARIO" in d) and "JORGE" in d:
@@ -246,23 +250,18 @@ def obtener_metricas_ahorro_completa(anio, saldo_inicial):
     
     for a in range(2026, anio + 1):
         for m in MESES_ORDEN:
-            # 1. Calculamos operativa solo de forma informativa
             sub_op = df_m_limpio[(df_m_limpio['anio'] == a) & (df_m_limpio['mes'] == m) & (df_m_limpio['cuenta'] == 'operativa')]
             ing_op = sub_op[sub_op['tipo'] == 'INGRESO']['importe'].sum()
             gas_op = sub_op[sub_op['tipo'] == 'GASTO']['importe'].sum()
             sobrante_op = ing_op - gas_op
             
-            # 2. Calculamos los movimientos REALES importados en la hucha
             sub_ah = df_m_limpio[(df_m_limpio['anio'] == a) & (df_m_limpio['mes'] == m) & (df_m_limpio['cuenta'] == 'ahorro')]
             ing_ah = sub_ah[sub_ah['tipo'] == 'INGRESO']['importe'].sum()
             gas_ah = sub_ah[sub_ah['tipo'] == 'GASTO']['importe'].sum()
             
-            # 3. Movimientos manuales de la hucha
             sub_r = df_r[(df_r['anio'] == a) & (df_r['mes'] == m)] if not df_r.empty else pd.DataFrame()
             ret_mes = sub_r['importe'].sum() if not sub_r.empty else 0.0
             
-            # ⚠️ CAMBIO CRUCIAL: La hucha ya NO suma el sobrante de la cuenta operativa.
-            # Solo se modifica con lo que pase dentro de la cuenta 'ahorro' + aportes manuales
             neto_mes_ahorro = (ing_ah - gas_ah) + ret_mes
             saldo_acum += neto_mes_ahorro
                 
@@ -315,12 +314,18 @@ st.markdown(f"""
 <div class="floating-badge">🗓️ MES ACTIVO: {st.session_state.mes_seleccionado.upper()}</div>
 """, unsafe_allow_html=True)
 
-st.title("💰 Control Económico Familiar v7.9.8 Cloud")
+st.title("💰 Control Económico Familiar v7.9.9 Cloud")
 
 # ==========================================
 # 🕹️ PANEL DE NAVEGACIÓN LATERAL
 # ==========================================
 st.sidebar.header("🕹️ Panel de Navegación")
+
+# 🟢 INDICADOR DE ESTADO DE CONEXIÓN A LA NUBE
+if is_postgres:
+    st.sidebar.success("☁️ Base de Datos: **Supabase (Nube Segura)**")
+else:
+    st.sidebar.error("⚠️ Alerta: Usando SQLite local (Riesgo de borrado)")
 
 try:
     meses_cerrados_df = pd.read_sql_query(text("SELECT anio, mes, cuenta FROM meses_cerrados"), engine)
@@ -754,7 +759,6 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                 bloque_val, concepto_limpio = "PENDIENTE", desc_orig
                                 matched = False
                                 
-                                # 1. PRIORIDAD ABSOLUTA: El cerebro del usuario (reglas personalizadas)
                                 for _, r_rule in reglas_df.iterrows():
                                     patron_ok = str(r_rule['patron']).upper() in desc_orig.upper()
                                     imp_rule = float(r_rule['importe_exacto'] or 0.0)
@@ -764,7 +768,6 @@ elif st.session_state.vista_nivel == 'MENSUAL':
                                         if bloque_val == "TRASPASOS": tipo_val = "TRASPASO"
                                         matched = True; break
                                 
-                                # 2. Si el cerebro no sabe qué es, tiramos de las reglas automáticas por defecto
                                 if not matched:
                                     b_ia, c_ia = auto_clasificar(desc_orig)
                                     if b_ia and c_ia:
@@ -1087,7 +1090,7 @@ elif st.session_state.vista_nivel == 'DETALLE_AGRUPADO':
     try:
         df_movs = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m AND bloque = :b AND concepto = :c AND cuenta = :cta"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "b": str(st.session_state.detalle_bloque), "c": str(st.session_state.detalle_concepto), "cta": str(st.session_state.cuenta_seleccionada)})
     except:
-        df_movs = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m AND bloque = :b AND concepto = :c"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "b": str(st.session_state.detalle_bloque), "c": str(st.session_state.detalle_concepto)})
+        df_movs = pd.read_sql_query(text("SELECT * FROM movimientos WHERE anio = :a AND mes = :m AND bloque = :b AND concepto = :c"), engine, params={"a": int(anio_sel), "m": str(st.session_state.mes_seleccionado), "b": str(st.session_state.detalle_deploy), "c": str(st.session_state.detalle_concepto)})
 
     has_real = (df_movs['es_real'].astype(int) == 1).any()
     if has_real: df_movs = df_movs[df_movs['es_real'].astype(int) == 1]
